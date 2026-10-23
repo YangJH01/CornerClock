@@ -103,3 +103,7 @@
 #define IDS_CHOICE_PROMPT_ANGLE      1122
 #define IDS_CHOICE_PROMPT_PATH       1123
 #define IDS_RIGHTS_RESERVED          1124
+#define IDS_OPT_TYPOGRAPHY           1125
+#define IDS_CHOICE_CLEAN             1126
+#define IDS_CHOICE_BOLD_TYPE         1127
+#define IDS_CHOICE_MONO              1128

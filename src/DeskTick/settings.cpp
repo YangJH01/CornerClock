@@ -43,7 +43,7 @@ static bool Packaged()
 // ------------------------------------------------------------------
 static WCHAR s_ini[MAX_PATH];
 
-// %LOCALAPPDATA%\DeskTick.ini, worked out once.
+// %LOCALAPPDATA%\CornerClock.ini, worked out once.
 static const WCHAR* IniPath()
 {
     if (!s_ini[0]) {
@@ -57,7 +57,7 @@ static const WCHAR* IniPath()
         // is the real folder and survives moving the exe.
         WCHAR local[MAX_PATH];
         if (GetEnvironmentVariableW(L"LOCALAPPDATA", local, _countof(local)) &&
-            SUCCEEDED(StringCchPrintfW(s_ini, _countof(s_ini), L"%s\\DeskTick.ini", local)))
+            SUCCEEDED(StringCchPrintfW(s_ini, _countof(s_ini), L"%s\\CornerClock.ini", local)))
             return s_ini;
 
         // No LOCALAPPDATA at all: fall back to the exe's own path with its
@@ -170,7 +170,7 @@ static void SnapshotFace(const IClockFace* f)
             // so where a developer will actually see it — the debugger is the
             // only output channel this app has, and reaching this at all means
             // the tables grew several times over.
-            OutputDebugStringW(L"DeskTick: s_def too small - Reset this face will no-op\n");
+            OutputDebugStringW(L"CornerClock: s_def too small - Reset this face will no-op\n");
             return;
         }
         s_def[s_nDef].p   = o[i].value;
@@ -301,12 +301,12 @@ void ConfigSetFlag(const WCHAR* key, bool on)
 // windows.startupTask extension in its manifest instead and asks Windows to
 // enable it — same menu item, same "nothing is cached" rule, different API.
 static const WCHAR RUN_KEY[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-static const WCHAR RUN_VAL[] = L"DeskTick";
+static const WCHAR RUN_VAL[] = L"CornerClock";
 
 // Must match TaskId in Package.appxmanifest's windows.startupTask extension.
 // A mismatch is not a build error — GetAsync just throws at runtime and the
 // menu item goes quietly dead.
-static const WCHAR TASK_ID[] = L"DeskTickStartup";
+static const WCHAR TASK_ID[] = L"CornerClockStartup";
 
 // The packaged pair. Both swallow everything: this API throws, and a menu
 // checkmark is not worth taking the app down for. C++/WinRT's get() asserts in

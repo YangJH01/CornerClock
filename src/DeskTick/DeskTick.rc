@@ -51,7 +51,7 @@ END
 // Explorer, the taskbar and Alt+Tab all show the icon with the LOWEST id as
 // the application's icon. So this one is 1 and must stay below the others —
 // give another icon a smaller id and the exe starts wearing that app's logo.
-1   ICON "res\\desktick.ico"
+1   ICON "res\\cornerclock.ico"
 
 101 ICON "res\\flyphotos.ico"
 102 ICON "res\\letitrain.ico"

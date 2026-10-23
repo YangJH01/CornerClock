@@ -7,7 +7,7 @@
 // reporting a bug has no way to describe.
 //
 // XML cannot include this, so two copies are kept by hand: Version= in
-// Package.appxmanifest and the assemblyIdentity in DeskTick.manifest.
+// the assemblyIdentity in DeskTick.manifest (the desktop build).
 //
 // RC only understands #define, so this file must stay free of anything else —
 // no #pragma once (harmless but pointless here), no types, no C++.
@@ -15,18 +15,18 @@
 #define VER_MAJOR       1
 #define VER_MINOR       0
 #define VER_PATCH       3
-#define VER_BUILD       0
+#define VER_BUILD       8
 
-#define VER_NUMBER      1,0,3,0             // VERSIONINFO wants commas
-#define VER_STRING      "1.0.3.0"           // and a matching string
-#define VER_DISPLAY     "v1.0.3"          // what a person reads, in the About box
+#define VER_NUMBER      1,0,3,8
+#define VER_STRING      "1.0.3.8"
+#define VER_DISPLAY     "v1.0.3.8 CornerClock"
 
-#define VER_COMPANY     "RYF Tools"
-#define VER_PRODUCT     "DeskTick"
-#define VER_DESCRIPTION "DeskTick desktop clock widget"
+#define VER_COMPANY     "CornerClock contributors (unofficial fork)"
+#define VER_PRODUCT     "CornerClock"
+#define VER_DESCRIPTION "CornerClock desktop clock widget"
 // DeskTick.rc only. The About box builds its own line from VER_COMPANY plus a
 // translated "All rights reserved." — the holder must not go through a
 // translator, and this whole string as one key would make nineteen of them
 // retype it. VERSIONINFO stays US English on purpose, so this stays as it is.
 #define VER_COPYRIGHT   "\xA9 RYF Tools. All rights reserved."
-#define VER_FILENAME    "DeskTick.exe"
+#define VER_FILENAME    "CornerClock.exe"
