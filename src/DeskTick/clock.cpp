@@ -394,6 +394,14 @@ static bool g_needOwner;                    // grab failed; retry on the next ti
 
 static void PinToDesktop()
 {
+    // The corner overlay is independent of Explorer's desktop window. Owning
+    // it from DefView lets shell desktop z-order changes strip its topmost bit.
+    if (g_corner) {
+        if (GetWindow(g_hwnd, GW_OWNER))
+            SetWindowLongPtrW(g_hwnd, GWLP_HWNDPARENT, 0);
+        g_needOwner = false;
+        return;
+    }
     HWND dv = FindDefView();
     if (dv) SetWindowLongPtrW(g_hwnd, GWLP_HWNDPARENT, (LONG_PTR)dv);
     g_needOwner = !dv;                      // no shell running: try again later
@@ -419,7 +427,7 @@ static void PinToDesktop()
 static void ApplyTopmost()
 {
     SetWindowPos(g_hwnd, g_topmost ? HWND_TOPMOST : HWND_BOTTOM, 0, 0, 0, 0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
 }
 
 // Corner mode follows the primary taskbar without a polling timer or a mouse
@@ -547,11 +555,14 @@ static void SyncCorner()
     if (current.left != x || current.top != y)
         SetWindowPos(g_hwnd, nullptr, x, y, 0, 0,
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-    if (!IsWindowVisible(g_hwnd)) {
+    if (!IsWindowVisible(g_hwnd) || IsIconic(g_hwnd)) {
         DrawFrame();
         ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
-        ApplyTopmost();
     }
+    // Visibility alone does not mean the clock is above normal application
+    // windows. Repair a lost topmost bit only when the clock should be shown.
+    if (g_topmost && !(GetWindowLongPtrW(g_hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST))
+        ApplyTopmost();
 }
 
 // ------------------------------------------------------------------
@@ -617,6 +628,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
 
     switch (msg) {
+    case WM_WINDOWPOSCHANGED:
+        if (g_corner && g_winPx && g_topmost && IsWindowVisible(hwnd) &&
+            !(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) && !g_taskbarPending)
+            g_taskbarPending = PostMessageW(hwnd, WM_TASKBAR_CHANGED, 0, 0) != FALSE;
+        break;
     case WM_TASKBAR_CHANGED:
         g_taskbarPending = false;
         SyncCorner();
@@ -764,7 +780,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // third are ours to remember (CornerClock.ini); the second is a registry value
         // Windows itself reads, so it is asked for fresh every time the menu
         // opens: the user may well have unticked it in Task Manager since.
-        AppendMenuW(m, MF_STRING | (g_topmost ? MF_CHECKED : 0), CMD_TOPMOST, T(IDS_MENU_TOPMOST));
+        AppendMenuW(m, MF_STRING | (g_topmost ? MF_CHECKED : 0) | (g_corner ? MF_GRAYED : 0),
+                    CMD_TOPMOST, T(IDS_MENU_TOPMOST));
         AppendMenuW(m, MF_STRING | (StartupEnabled() ? MF_CHECKED : 0), CMD_STARTUP, T(IDS_MENU_STARTUP));
         AppendMenuW(m, MF_STRING | (g_tray ? MF_CHECKED : 0) | (g_corner ? MF_GRAYED : 0),
                     CMD_TRAY, T(IDS_MENU_TRAY));
@@ -819,6 +836,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             CustomizeShow(hwnd, g_activeFace);
             break;
         case CMD_TOPMOST:
+            if (g_corner) break;
             g_topmost = !g_topmost;
             ApplyTopmost();
             ConfigSetFlag(L"Topmost", g_topmost);
@@ -984,8 +1002,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
         wx, wy, 1, 1, nullptr, nullptr, hInst, nullptr);
     if (!g_hwnd) return 1;
 
-    // Always pinned: owned by the desktop so Win+D skips us. Harmless if the
-    // desktop can't be found (shell not running) — the retry picks it up.
+    // Only freely placed desktop widgets use Explorer ownership. Corner mode
+    // stays independent and restores visibility through foreground events.
     PinToDesktop();
 
     // The persisted window toggles. Tray is a no-op in its off state, so it is
@@ -993,7 +1011,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
     // after the ShowWindow below, which would otherwise undo it. Seconds needs
     // no apply call, but must be read before CreateResources below: BuildDial
     // sizes the Digital faces' panel from ShowSeconds().
-    g_topmost = ConfigGetFlag(L"Topmost", true);
+    g_topmost = g_corner || ConfigGetFlag(L"Topmost", true);
     g_tray    = g_corner || ConfigGetFlag(L"Tray", true);
     g_seconds = ConfigGetFlag(L"Seconds", true);
     TraySync();

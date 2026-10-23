@@ -9,6 +9,9 @@ monitor's bottom-right corner, eight scaled pixels from each edge. As the
 primary taskbar slides up or down, the clock follows its current top edge and
 stays visible above it. The clock's position is locked and mouse clicks pass
 through it to the application underneath.
+Corner mode is an independent topmost window, not owned by Explorer's desktop.
+It repairs lost topmost state on window-position events while respecting the
+fullscreen visibility rule.
 
 On the clock's monitor, a foreground borderless fullscreen app hides the clock
 while it covers the taskbar. Returning to a normal window restores the clock;
@@ -28,8 +31,8 @@ clock redraws once per second (once per minute if seconds are disabled). Movemen
 repositions the cached clock window without redrawing its text. Memory usage
 must distinguish total working set from private memory; measure on the target PC.
 
-Right-click the tray icon for appearance, startup and exit. Resize and hiding
-the tray icon are disabled while the overlay is locked. To change its size,
+Right-click the tray icon for appearance, startup and exit. Resize, disabling
+always-on-top and hiding the tray icon are disabled while the overlay is locked. To change its size,
 exit and edit `Size` in the `[Window]` INI section (physical pixels; default 192).
 Settings live in `%LOCALAPPDATA%\CornerClock.ini`; the startup entry is named
 `CornerClock`. To restore freely draggable placement, exit, set `Corner=0` in
