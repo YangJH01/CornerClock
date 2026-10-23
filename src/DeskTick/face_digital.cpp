@@ -136,7 +136,7 @@ class DigitalFace : public IClockFace {
             float x = rect.left + (rect.right - rect.left - cache.advance[digit]) / 2;
             rt->SetTransform(D2D1::Matrix3x2F::Translation(x, cache.baseline) * base);
             rt->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            b->SetColor(D2D1::ColorF(0.10f, 0.12f, 0.15f, 0.9f));
+            b->SetColor(D2D1::ColorF(0.04f, 0.05f, 0.06f, 1.0f));
             rt->DrawGeometry(cache.path[digit], b, 1.25f);
             b->SetColor(color);
             rt->FillGeometry(cache.path[digit], b);
