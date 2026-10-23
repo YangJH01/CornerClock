@@ -57,15 +57,23 @@ class DigitalFace : public IClockFace {
     mutable IDWriteTextFormat* m_day = nullptr;
     mutable IDWriteTextFormat* m_label = nullptr;
 
-    // A small text-only shadow supplies contrast without adding a background.
+    // A one-DIP contour keeps every glyph legible over white and dark content.
+    // Reuses the existing formats and brush; no screen sampling or extra timer.
     void Text(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b,
               IDWriteTextFormat* format, const WCHAR* text,
               const D2D1_RECT_F& rect, const D2D1_COLOR_F& color) const
     {
-        D2D1_RECT_F shadow = rect;
-        shadow.top += 1.0f; shadow.bottom += 1.0f;
-        b->SetColor(D2D1::ColorF(0, 0.65f * color.a));
-        DrawTextIn(rt, b, format, text, shadow);
+        static const D2D1_POINT_2F offsets[] = {
+            { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 },
+            { -0.707f, -0.707f }, { 0.707f, -0.707f },
+            { -0.707f, 0.707f }, { 0.707f, 0.707f }
+        };
+        b->SetColor(D2D1::ColorF(0.02f, 0.025f, 0.035f, 0.75f));
+        for (const auto& offset : offsets) {
+            D2D1_RECT_F edge = D2D1::RectF(rect.left + offset.x, rect.top + offset.y,
+                                          rect.right + offset.x, rect.bottom + offset.y);
+            DrawTextIn(rt, b, format, text, edge);
+        }
         b->SetColor(color);
         DrawTextIn(rt, b, format, text, rect);
     }

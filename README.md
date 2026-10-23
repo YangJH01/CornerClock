@@ -17,7 +17,8 @@ captioned maximized windows are not treated as fullscreen.
 
 The Digital face offers Clean (default), Bold and Mono typography presets in
 the appearance dialog. All use aligned, fixed-width digit cells for hours,
-minutes and seconds, with quieter separators and a small text-only shadow.
+minutes and seconds, with quieter separators and a thin dark glyph outline
+that preserves readability on white content without an opaque background.
 
 Taskbar tracking uses WinEvent notifications restricted to the taskbar thread.
 Foreground changes use a foreground event hook and a geometry hook restricted
