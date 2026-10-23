@@ -1,219 +1,145 @@
-// face_digital.cpp — "Digital": Win7-sidebar style bar, [04] [DEC/MON]
-// [03:12] [PM], on a dark translucent rounded rect so the text stays legible
-// over any wallpaper.
-//
-// Unlike the analog faces, this one draws TEXT every frame, so the engine's
-// "nothing per-frame touches DirectWrite" property does not hold here. Cost is
-// held down the same way face_simple caches its geometries: the DWrite factory
-// and the three text formats are built once on first draw and reused for the
-// process lifetime (never freed — a handful of device-independent objects, the
-// OS reclaims them at exit).
-//
-// The bar is drawn into the engine's square 240x240 scene, so it is a 48-tall
-// strip with transparent space above and below. The window stays square and
-// therefore larger than the clock — only noticeable when dragging (the whole
-// square is a drag handle) or in resize mode (the corner overlays sit away from
-// the bar). Matching the window to the bar would need a per-face aspect ratio in
-// the engine: CreateResources, BuildDial, DrawFrame, the ULW blit and the
-// grip/tick hit-tests all assume width == height.
-
+// Digital face: one baseline, fixed digit cells and quiet separators.
+// Formats are cached; the clock still redraws only at its existing tick rate.
 #include "faces.h"
 
-// Segoe UI Light's digits are proportional — measured, "1" is 730 design
-// units against 1055 for every other digit. A centred "%02d:%02d" therefore
-// slides sideways whenever a 1 enters or leaves the string. The time goes
-// through DrawCells instead: 0.515 em is Light's common digit advance, so the
-// run is exactly as wide as it has always been for round digits, and it
-// clears the 0.4883 em widest ink with room to spare. (m_fLbl is Regular,
-// whose digits ARE tabular, so the seconds field needs none of this.)
-static const float TIME_SIZE  = 34.0f;
-static const float TIME_CELL  = TIME_SIZE * 0.515f;
-static const float TIME_COLON = TIME_SIZE * 0.24f;
+struct Typography {
+    const WCHAR* family;
+    float size, cell, colon, secondsAlpha;
+    DWRITE_FONT_WEIGHT weight;
+};
+static const Typography STYLES[] = {
+    { L"Segoe UI", 26, 14.5f, 7, 0.72f, DWRITE_FONT_WEIGHT_NORMAL },
+    { L"Segoe UI", 32, 18.5f, 8, 0.85f, DWRITE_FONT_WEIGHT_SEMI_BOLD },
+    { L"Consolas", 28, 16.8f, 11, 0.80f, DWRITE_FONT_WEIGHT_NORMAL },
+};
+static const UINT STYLE_NAMES[] = {
+    IDS_CHOICE_CLEAN, IDS_CHOICE_BOLD_TYPE, IDS_CHOICE_MONO, 0
+};
+static_assert(_countof(STYLE_NAMES) == _countof(STYLES) + 1);
 
-// Bar geometry, centered in the 240-DIP scene. Three blocks of fixed width:
-// whatever is hidden gives its width back and the rest re-centres, so the bar
-// is never wider than what is in it. With everything shown the arithmetic
-// lands on 8..232, the face's full-width bar.
-static const float DATE_W = 88.0f;      // day number + month/weekday column
-static const float TIME_W = 98.0f;      // slot the centred time run sits in
-static const float SIDE_W = 38.0f;      // AM/PM, seconds, or both stacked
-static const float BY0  = 96.0f;
-static const float BY1  = 144.0f;
-static const float BMID = (BY0 + BY1) / 2;
-
-// Names come from MONTH_ABBR / DAY_ABBR, which loc.cpp fills from the user's
-// regional settings — so they arrive translated with nothing here to change.
-//
-// This face deliberately does NOT use LocDate(): the three slots above are
-// fixed widths, and a formatted date carries its own field order and length,
-// which is exactly what they have no room to absorb. Abbreviated names in two
-// stacked slots is the layout, and it survives translation because the OS's
-// abbreviations are short in every locale by construction. The faces that show
-// a date as one measured line — Digital bold, Stack, Banner, Split — do use it.
-
-// ---- options ----
-// Font size and weight stay off the menu: the three formats below are built
-// once and never rebuilt, and the fixed-slot layout is measured against them.
-static int o_hour24 = 1;
-static int o_ampm   = 0;
-static int o_date   = 0;
-static int o_panel  = 0;
-static int o_text   = RGB(247, 247, 250);
-static int o_muted  = RGB(158, 184, 217);
-
+static const float DATE_W = 64, SIDE_W = 28;
+static const float BY0 = 99, BY1 = 141, BMID = 120;
+static int o_style = 0;
+static int o_hour24 = 1, o_ampm = 0, o_date = 0, o_panel = 0;
+static int o_text = RGB(247, 248, 250), o_muted = RGB(169, 180, 196);
 static const FaceOpt s_opts[] = {
-    { L"24-hour clock", IDS_OPT_HOUR24,       OPT_BOOL,  &o_hour24, nullptr },
-    { L"Show AM/PM",    IDS_OPT_SHOW_AMPM,    OPT_BOOL,  &o_ampm,   nullptr },
-    { L"Show date",     IDS_OPT_SHOW_DATE,    OPT_BOOL,  &o_date,   nullptr },
-    { L"Show panel",    IDS_OPT_SHOW_PANEL,   OPT_BOOL,  &o_panel,  nullptr },
-    { L"Text colour",   IDS_OPT_TEXT_COLOUR,  OPT_COLOR, &o_text,   nullptr },
-    // Colours every label on the bar: the month, weekday, AM/PM and seconds.
-    { L"Label colour",  IDS_OPT_LABEL_COLOUR, OPT_COLOR, &o_muted,  nullptr },
+    { L"Typography", IDS_OPT_TYPOGRAPHY, OPT_CHOICE, &o_style, STYLE_NAMES },
+    { L"24-hour clock", IDS_OPT_HOUR24, OPT_BOOL, &o_hour24, nullptr },
+    { L"Show AM/PM", IDS_OPT_SHOW_AMPM, OPT_BOOL, &o_ampm, nullptr },
+    { L"Show date", IDS_OPT_SHOW_DATE, OPT_BOOL, &o_date, nullptr },
+    { L"Show panel", IDS_OPT_SHOW_PANEL, OPT_BOOL, &o_panel, nullptr },
+    { L"Text colour", IDS_OPT_TEXT_COLOUR, OPT_COLOR, &o_text, nullptr },
+    { L"Label colour", IDS_OPT_LABEL_COLOUR, OPT_COLOR, &o_muted, nullptr },
 };
 
-// Worked out in one place because two callers must agree on it: DrawDial
-// draws the panel, DrawHands fills it. The right-hand slot holds AM/PM *or*
-// the seconds *or* both stacked, so it survives hiding AM/PM whenever the
-// second hand is on — otherwise the seconds would land outside the panel.
-struct Bar { float x0, x1, date, time, side; bool showDate, showSide; };
-
-// Place the three blocks for the options currently set.
+struct Bar { float x0, x1, time, side; };
 static Bar LayOut()
 {
+    const Typography& s = STYLES[o_style];
+    float run = (ShowSeconds() ? 6 : 4) * s.cell + (ShowSeconds() ? 2 : 1) * s.colon;
+    float width = 20 + run + (o_date ? DATE_W : 0) + (o_ampm ? SIDE_W : 0);
     Bar r;
-    r.showDate = o_date != 0;
-    r.showSide = o_ampm != 0 || ShowSeconds();
-    const float w = (r.showDate ? DATE_W : 0) + TIME_W + (r.showSide ? SIDE_W : 0);
-    r.x0   = CX - w / 2;
-    r.date = r.x0;
-    r.time = r.x0 + (r.showDate ? DATE_W : 0);
-    r.side = r.time + TIME_W;
-    r.x1   = r.x0 + w;
+    r.x0 = CX - width / 2;
+    r.x1 = CX + width / 2;
+    r.time = r.x0 + 10 + (o_date ? DATE_W : 0);
+    r.side = r.time + run;
     return r;
 }
 
 D2D1_RECT_F DigitalBounds()
 {
-    const Bar bar = LayOut();
-    return D2D1::RectF(bar.x0, BY0, bar.x1, BY1);
+    const Bar r = LayOut();
+    return D2D1::RectF(r.x0, BY0, r.x1, BY1);
 }
 
 class DigitalFace : public IClockFace {
-    mutable IDWriteFactory*    m_dw    = nullptr;   // lazy, cached forever
-    mutable IDWriteTextFormat* m_fTime = nullptr;   // 34 light — "03:12"
-    mutable IDWriteTextFormat* m_fDay  = nullptr;   // 30 light — "04"
-    mutable IDWriteTextFormat* m_fLbl  = nullptr;   // 11.5 — DEC / MON / PM / SS
-    mutable IDWriteTextFormat* m_fSec  = nullptr;   // readable inline seconds
+    mutable IDWriteTextFormat* m_time[_countof(STYLES)] = {};
+    mutable IDWriteTextFormat* m_day = nullptr;
+    mutable IDWriteTextFormat* m_label = nullptr;
 
-    // One Segoe UI format at this size and weight, centre-aligned.
-    IDWriteTextFormat* MakeFormat(float size, DWRITE_FONT_WEIGHT weight) const
+    // A small text-only shadow supplies contrast without adding a background.
+    void Text(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b,
+              IDWriteTextFormat* format, const WCHAR* text,
+              const D2D1_RECT_F& rect, const D2D1_COLOR_F& color) const
     {
-        return MakeTextFormat(m_dw, L"Segoe UI", size, weight,
-                              DWRITE_TEXT_ALIGNMENT_CENTER);
+        D2D1_RECT_F shadow = rect;
+        shadow.top += 1.0f; shadow.bottom += 1.0f;
+        b->SetColor(D2D1::ColorF(0, 0.65f * color.a));
+        DrawTextIn(rt, b, format, text, shadow);
+        b->SetColor(color);
+        DrawTextIn(rt, b, format, text, rect);
     }
 
 public:
-    // The INI section the options above are saved under, then the menu label.
     const WCHAR* GetName() const override { return L"Digital"; }
     UINT GetLabel() const override { return IDS_FACE_DIGITAL; }
 
-    // Static part only: the translucent bar. Everything time-dependent is text
-    // and therefore lives in DrawHands.
     bool DrawDial(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b) const override
     {
         if (o_panel) {
-            const Bar bar = LayOut();
             b->SetColor(D2D1::ColorF(0.05f, 0.07f, 0.12f, 0.35f));
-            rt->FillRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(bar.x0, BY0, bar.x1, BY1), 8.0f, 8.0f), b);
+            rt->FillRoundedRectangle(D2D1::RoundedRect(DigitalBounds(), 8, 8), b);
         }
         return true;
     }
 
-    // The six knobs above, in the order the dialog lays them out.
     int GetOptions(const FaceOpt** out) const override
     {
         *out = s_opts;
         return _countof(s_opts);
     }
 
-    // Everything time-dependent: the date block, the time, and whatever the
-    // right-hand slot is carrying. Builds the three formats on first call.
     void DrawHands(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b,
                    const SYSTEMTIME& st, bool seconds,
                    const D2D1_MATRIX_3X2_F& base) const override
     {
-        if (!m_dw) {                                  // one-time format build
-            m_dw = SharedDWrite();
-            if (!m_dw) return;
-            m_fTime = MakeFormat(TIME_SIZE, DWRITE_FONT_WEIGHT_LIGHT);
-            m_fDay  = MakeFormat(30.0f, DWRITE_FONT_WEIGHT_LIGHT);
-            m_fLbl  = MakeFormat(11.5f, DWRITE_FONT_WEIGHT_NORMAL);
-            m_fSec  = MakeFormat(24.0f, DWRITE_FONT_WEIGHT_LIGHT);
-        }
+        IDWriteFactory* dw = SharedDWrite();
+        if (!dw) return;
+        const Typography& style = STYLES[o_style];
+        if (!m_time[o_style])
+            m_time[o_style] = MakeTextFormat(dw, style.family, style.size,
+                style.weight, DWRITE_TEXT_ALIGNMENT_CENTER);
+        if (!m_day)
+            m_day = MakeTextFormat(dw, L"Segoe UI", 22, DWRITE_FONT_WEIGHT_NORMAL,
+                                  DWRITE_TEXT_ALIGNMENT_CENTER);
+        if (!m_label)
+            m_label = MakeTextFormat(dw, L"Segoe UI", 10, DWRITE_FONT_WEIGHT_NORMAL,
+                                    DWRITE_TEXT_ALIGNMENT_CENTER);
 
         rt->SetTransform(base);
-        // ClearType needs an opaque background this layered window doesn't
-        // have; the engine only sets this on the dial target, so set it here
-        // too or the per-frame text renders with colour fringing.
         rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-
-        WCHAR buf[16];
         const Bar bar = LayOut();
-        const D2D1_COLOR_F bright = FromRGB(o_text);
-        const D2D1_COLOR_F muted  = FromRGB(o_muted);
-
-        if (bar.showDate) {
-            // day number
-            b->SetColor(bright);
+        const D2D1_COLOR_F bright = FromRGB(o_text), muted = FromRGB(o_muted);
+        WCHAR buf[16];
+        if (o_date) {
+            float x = bar.x0 + 6;
             wsprintfW(buf, L"%02d", st.wDay);
-            DrawTextIn(rt, b, m_fDay, buf,
-                D2D1::RectF(bar.date + 2, BMID - 20, bar.date + 44, BMID + 20));
-
-            // month over weekday
-            b->SetColor(muted);
-            DrawTextIn(rt, b, m_fLbl, MONTH_ABBR[(st.wMonth - 1) % 12],
-                D2D1::RectF(bar.date + 46, BY0 + 6,  bar.date + 86, BY0 + 22));
-            DrawTextIn(rt, b, m_fLbl, DAY_ABBR[st.wDayOfWeek % 7],
-                D2D1::RectF(bar.date + 46, BY0 + 24, bar.date + 86, BY0 + 40));
+            Text(rt, b, m_day, buf, D2D1::RectF(x, BY0, x + 30, BY1), bright);
+            Text(rt, b, m_label, MONTH_ABBR[(st.wMonth - 1) % 12],
+                 D2D1::RectF(x + 30, BMID - 14, x + 62, BMID), muted);
+            Text(rt, b, m_label, DAY_ABBR[st.wDayOfWeek % 7],
+                 D2D1::RectF(x + 30, BMID, x + 62, BMID + 14), muted);
         }
 
-        // One glyph per fixed cell so it cannot slide (see above), the whole
-        // run centred in the slot the layout gave it — never a literal x, since
-        // the blocks either side may be hidden.
         int h = o_hour24 ? st.wHour : (st.wHour % 12 ? st.wHour % 12 : 12);
-        b->SetColor(bright);
-        const float runW = 4 * TIME_CELL + TIME_COLON;
-        float tx = bar.time + (TIME_W - runW) / 2;
-        wsprintfW(buf, L"%02d", h);
-        DrawCells(rt, b, m_fTime, buf, TIME_CELL, tx, BMID - 22, BMID + 22);
-        tx += 2 * TIME_CELL;
-        DrawTextIn(rt, b, m_fTime, LocTimeSep(),
-                   D2D1::RectF(tx, BMID - 22, tx + TIME_COLON, BMID + 22));
-        tx += TIME_COLON;
-        wsprintfW(buf, L"%02d", st.wMinute);
-        DrawCells(rt, b, m_fTime, buf, TIME_CELL, tx, BMID - 22, BMID + 22);
-
-        // Right slot: AM/PM alone, or stacked over the seconds when the second
-        // hand is on — stacking reuses the date slot's idiom and costs no width,
-        // which appending ":SS" to the time would not have.
-        b->SetColor(muted);
-        // The locale's own designators — "AM"/"PM", 午前/午後, ص/م. A 24-hour
-        // locale has none and answers "", which draws nothing; the option above
-        // is what decides whether the slot appears at all.
-        const WCHAR* ampm = LocAmPm(st.wHour >= 12);
-        wsprintfW(buf, L"%02d", st.wSecond);
-        const float sx0 = bar.side, sx1 = bar.side + SIDE_W;
-        if (o_ampm && seconds) {
-            DrawTextIn(rt, b, m_fLbl, ampm, D2D1::RectF(sx0, BY0 + 6,  sx1, BY0 + 22));
-            DrawTextIn(rt, b, m_fLbl, buf,  D2D1::RectF(sx0, BY0 + 24, sx1, BY0 + 40));
-        } else if (o_ampm) {
-            DrawTextIn(rt, b, m_fLbl, ampm, D2D1::RectF(sx0, BMID - 12, sx1, BMID + 12));
-        } else if (seconds) {
-            b->SetColor(bright);
-            wsprintfW(buf, L":%02d", st.wSecond);
-            DrawTextIn(rt, b, m_fSec, buf, D2D1::RectF(sx0, BMID - 22, sx1, BMID + 22));
+        wsprintfW(buf, L"%02d%02d%02d", h, st.wMinute, st.wSecond);
+        float x = bar.time;
+        for (int i = 0; i < (seconds ? 6 : 4); i++) {
+            if (i == 2 || i == 4) {
+                Text(rt, b, m_time[o_style], LocTimeSep(),
+                     D2D1::RectF(x, BY0, x + style.colon, BY1), FromRGB(o_text, 0.48f));
+                x += style.colon;
+            }
+            WCHAR digit[] = { buf[i], 0 };
+            Text(rt, b, m_time[o_style], digit,
+                 D2D1::RectF(x, BY0, x + style.cell, BY1),
+                 FromRGB(o_text, i >= 4 ? style.secondsAlpha : 1.0f));
+            x += style.cell;
         }
+
+        if (o_ampm)
+            Text(rt, b, m_label, LocAmPm(st.wHour >= 12),
+                 D2D1::RectF(bar.side, BY0, bar.side + SIDE_W, BY1), muted);
     }
 };
 

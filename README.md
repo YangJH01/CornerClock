@@ -10,7 +10,18 @@ primary taskbar slides up or down, the clock follows its current top edge and
 stays visible above it. The clock's position is locked and mouse clicks pass
 through it to the application underneath.
 
+On the clock's monitor, a foreground borderless fullscreen app hides the clock
+while it covers the taskbar. Returning to a normal window restores the clock;
+revealing the taskbar above the fullscreen app also reveals the clock. Normal
+captioned maximized windows are not treated as fullscreen.
+
+The Digital face offers Clean (default), Bold and Mono typography presets in
+the appearance dialog. All use aligned, fixed-width digit cells for hours,
+minutes and seconds, with quieter separators and a small text-only shadow.
+
 Taskbar tracking uses WinEvent notifications restricted to the taskbar thread.
+Foreground changes use a foreground event hook and a geometry hook restricted
+to the active window's thread, with an early HWND filter.
 It adds no polling timer, global mouse hook, service, or helper process. The
 clock redraws once per second (once per minute if seconds are disabled). Movement
 repositions the cached clock window without redrawing its text. Memory usage

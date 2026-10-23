@@ -11,6 +11,7 @@
 #include <windowsx.h>
 #include <shellapi.h>
 #include <d2d1.h>
+#include <dwmapi.h>
 #include <string.h>
 #include "faces.h"
 #include "app.h"
@@ -20,6 +21,7 @@
 #pragma comment(lib, "gdi32")
 #pragma comment(lib, "ole32")
 #pragma comment(lib, "shell32")
+#pragma comment(lib, "dwmapi")
 
 // DIAL / CX / RADIUS live in faces.h (shared with the faces).
 static const float GRIP   = 28.0f;           // corner hit-region size (DIPs)
@@ -62,9 +64,13 @@ static int                  g_face;      // 0..NUM_BUILTIN-1 = built-in face, NU
 static bool                 g_corner;
 static HWND                 g_taskbar;
 static HWINEVENTHOOK         g_taskbarHook;
+static HWINEVENTHOOK         g_focusHook;
+static HWINEVENTHOOK         g_foregroundHook;
+static HWND                 g_foreground;
 static bool                 g_taskbarPending;
 static void SyncCorner();
 static void WatchTaskbar();
+static void WatchForeground();
 
 // Face whose hands DrawFrame draws — set by BuildDial to what was actually
 // drawn (an image load failure falls back to the default face, hands included).
@@ -441,10 +447,73 @@ static void WatchTaskbar()
             nullptr, TaskbarEvent, process, thread, WINEVENT_OUTOFCONTEXT);
 }
 
+static void CALLBACK ForegroundEvent(HWINEVENTHOOK, DWORD event, HWND hwnd,
+                                     LONG object, LONG child, DWORD, DWORD)
+{
+    if (event != EVENT_SYSTEM_FOREGROUND &&
+        (hwnd != g_foreground || object != OBJID_WINDOW || child != CHILDID_SELF)) return;
+    if (!g_taskbarPending)
+        g_taskbarPending = PostMessageW(g_hwnd, WM_TASKBAR_CHANGED, 0, 0) != FALSE;
+}
+
+static void WatchForeground()
+{
+    if (!g_corner) return;
+    if (!g_focusHook)
+        g_focusHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND,
+            nullptr, ForegroundEvent, 0, 0, WINEVENT_OUTOFCONTEXT);
+    HWND foreground = GetForegroundWindow();
+    if (foreground == g_foreground && g_foregroundHook) return;
+    if (g_foregroundHook) UnhookWinEvent(g_foregroundHook);
+    g_foregroundHook = nullptr;
+    g_foreground = foreground;
+    DWORD process = 0;
+    DWORD thread = foreground ? GetWindowThreadProcessId(foreground, &process) : 0;
+    if (thread && process != GetCurrentProcessId())
+        g_foregroundHook = SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_LOCATIONCHANGE,
+            nullptr, ForegroundEvent, process, thread, WINEVENT_OUTOFCONTEXT);
+}
+
+static bool FullscreenCoversClock(HMONITOR monitor, const RECT& screen, bool barExpanded)
+{
+    HWND foreground = GetForegroundWindow();
+    if (!foreground || foreground == g_hwnd || foreground == g_taskbar ||
+        foreground == GetShellWindow() || !IsWindowVisible(foreground) || IsIconic(foreground) ||
+        MonitorFromWindow(foreground, MONITOR_DEFAULTTONULL) != monitor) return false;
+    WCHAR cls[64] = {};
+    GetClassNameW(foreground, cls, _countof(cls));
+    if (!lstrcmpW(cls, L"WorkerW") || !lstrcmpW(cls, L"Progman")) return false;
+
+    // Maximized normal windows can cover the full work area when the taskbar
+    // auto-hides. Their caption distinguishes them from borderless fullscreen.
+    LONG_PTR style = GetWindowLongPtrW(foreground, GWL_STYLE);
+    if ((style & WS_CAPTION) == WS_CAPTION) return false;
+    DWORD cloaked = 0;
+    DwmGetWindowAttribute(foreground, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
+    if (cloaked) return false;
+    RECT frame = {};
+    if (FAILED(DwmGetWindowAttribute(foreground, DWMWA_EXTENDED_FRAME_BOUNDS,
+                                    &frame, sizeof(frame))) &&
+        !GetWindowRect(foreground, &frame)) return false;
+    if (frame.left > screen.left || frame.top > screen.top ||
+        frame.right < screen.right || frame.bottom < screen.bottom) return false;
+
+    // A revealed taskbar above the fullscreen app also reveals the clock.
+    // An always-visible taskbar may keep its rectangle while covered, so its
+    // geometry alone is insufficient: compare the actual window stacking order.
+    if (barExpanded)
+        for (HWND w = GetTopWindow(nullptr); w; w = GetWindow(w, GW_HWNDNEXT)) {
+            if (w == g_taskbar) return false;
+            if (w == foreground) break;
+        }
+    return true;
+}
+
 static void SyncCorner()
 {
     if (!g_corner || !g_winPx || g_resize || g_drag) return;
     if (!IsWindow(g_taskbar) || !g_taskbarHook) WatchTaskbar();
+    WatchForeground();
 
     POINT origin = {};
     MONITORINFO monitor = { sizeof(monitor) };
@@ -456,10 +525,16 @@ static void SyncCorner()
     // A retracted bar leaves a thin activation strip at the screen edge.
     int bottom = monitor.rcMonitor.bottom;
     RECT bar = {}, visible = {};
-    if (g_taskbar && IsWindowVisible(g_taskbar) &&
+    bool barExpanded = g_taskbar && IsWindowVisible(g_taskbar) &&
         GetWindowRect(g_taskbar, &bar) && IntersectRect(&visible, &bar, &monitor.rcMonitor) &&
-        visible.bottom - visible.top > MulDiv(3, g_dpi, 96))
-        bottom = visible.top;
+        visible.bottom - visible.top > MulDiv(3, g_dpi, 96);
+    if (barExpanded) bottom = visible.top;
+
+    bool show = !FullscreenCoversClock(hm, monitor.rcMonitor, barExpanded);
+    if (!show) {
+        if (IsWindowVisible(g_hwnd)) ShowWindow(g_hwnd, SW_HIDE);
+        return;
+    }
 
     // Anchor the drawn strip, not the transparent square surrounding it.
     D2D1_RECT_F bounds = g_activeFace == g_faceDigital ? DigitalBounds()
@@ -472,7 +547,11 @@ static void SyncCorner()
     if (current.left != x || current.top != y)
         SetWindowPos(g_hwnd, nullptr, x, y, 0, 0,
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-
+    if (!IsWindowVisible(g_hwnd)) {
+        DrawFrame();
+        ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+        ApplyTopmost();
+    }
 }
 
 // ------------------------------------------------------------------
@@ -822,6 +901,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         ArmTimer();
         return 0;
     case WM_DESTROY:
+        if (g_focusHook) { UnhookWinEvent(g_focusHook); g_focusHook = nullptr; }
+        if (g_foregroundHook) { UnhookWinEvent(g_foregroundHook); g_foregroundHook = nullptr; }
         if (g_taskbarHook) { UnhookWinEvent(g_taskbarHook); g_taskbarHook = nullptr; }
         TrayDelete();                           // unconditional: a leftover icon
                                                 // sits there until someone hovers it
