@@ -352,6 +352,7 @@ static LRESULT CALLBACK OutsideClickProc(int code, WPARAM wp, LPARAM lp)
 // outside-click hook lives exactly as long as the mode does.
 static void SetResizeMode(bool on)
 {
+    if (g_corner && on) return;
     if (on == g_resize) return;
     g_resize = on;
     if (on) {
@@ -451,29 +452,27 @@ static void SyncCorner()
                            : MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
     if (!GetMonitorInfoW(hm, &monitor)) return;
 
+    // Follow the taskbar's actual top edge on each animation location event.
+    // A retracted bar leaves a thin activation strip at the screen edge.
+    int bottom = monitor.rcMonitor.bottom;
+    RECT bar = {}, visible = {};
+    if (g_taskbar && IsWindowVisible(g_taskbar) &&
+        GetWindowRect(g_taskbar, &bar) && IntersectRect(&visible, &bar, &monitor.rcMonitor) &&
+        visible.bottom - visible.top > MulDiv(3, g_dpi, 96))
+        bottom = visible.top;
+
     // Anchor the drawn strip, not the transparent square surrounding it.
     D2D1_RECT_F bounds = g_activeFace == g_faceDigital ? DigitalBounds()
                          : D2D1::RectF(0, 0, DIAL, DIAL);
     int margin = MulDiv(8, g_dpi, 96);
     int x = monitor.rcMonitor.right - margin - (int)(bounds.right * g_winPx / DIAL);
-    int y = monitor.rcMonitor.bottom - margin - (int)(bounds.bottom * g_winPx / DIAL);
+    int y = bottom - margin - (int)(bounds.bottom * g_winPx / DIAL);
     RECT current = {};
     GetWindowRect(g_hwnd, &current);
     if (current.left != x || current.top != y)
         SetWindowPos(g_hwnd, nullptr, x, y, 0, 0,
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
-    RECT bar = {}, visible = {};
-    bool expanded = g_taskbar && IsWindowVisible(g_taskbar) &&
-        GetWindowRect(g_taskbar, &bar) && IntersectRect(&visible, &bar, &monitor.rcMonitor) &&
-        visible.bottom - visible.top > MulDiv(3, g_dpi, 96) &&
-        visible.right - visible.left > MulDiv(3, g_dpi, 96);
-    bool show = !expanded;
-    if (show != (IsWindowVisible(g_hwnd) != FALSE)) {
-        if (show) DrawFrame(); // It may have been hidden across a minute boundary.
-        ShowWindow(g_hwnd, show ? SW_SHOWNOACTIVATE : SW_HIDE);
-        if (show) ApplyTopmost();
-    }
 }
 
 // ------------------------------------------------------------------
@@ -544,6 +543,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         SyncCorner();
         return 0;
     case WM_NCHITTEST: {
+        if (g_corner) return HTCLIENT; // Never enter the native caption move loop.
         if (g_resize) {
             RECT rc; GetWindowRect(hwnd, &rc);
             int x = GET_X_LPARAM(lp) - rc.left, y = GET_Y_LPARAM(lp) - rc.top;
@@ -577,6 +577,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         SaveWindow();                           // the clock was dragged
         return 0;
     case WM_NCLBUTTONDBLCLK:
+        if (g_corner) return 0;
         // Everything outside the grip hit-tests as HTCAPTION, so a double-click
         // on the clock arrives here (needs CS_DBLCLKS on the class). Cycles the
         // built-in faces; an asset image face wraps back to the first built-in.
@@ -586,7 +587,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         RefreshFace();
         SaveWindow();
         return 0;
-    case WM_LBUTTONDOWN: {                      // only reachable in resize mode
+    case WM_LBUTTONDOWN: {
+        if (g_corner || !g_resize) return 0;
         int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
         if (InGrip(x, y)) {                     // grip: start manual resize drag
             RECT rc; GetWindowRect(hwnd, &rc);
@@ -673,7 +675,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // "Show seconds" covers the six text faces too, which have no hand.
         AppendMenuW(m, MF_STRING | (g_seconds ? MF_CHECKED : 0), CMD_SECONDS, T(IDS_MENU_SHOW_SECONDS));
         AppendMenuW(m, MF_STRING, CMD_CONFIG, T(IDS_MENU_CUSTOMIZE));
-        AppendMenuW(m, MF_STRING | (g_resize  ? MF_CHECKED : 0), CMD_RESIZE,  T(IDS_MENU_RESIZE));
+        AppendMenuW(m, MF_STRING | (g_resize ? MF_CHECKED : 0) | (g_corner ? MF_GRAYED : 0),
+                    CMD_RESIZE, T(IDS_MENU_RESIZE));
         AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(m, MF_POPUP, (UINT_PTR)faces, T(IDS_MENU_FACE));
         AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
@@ -684,7 +687,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // opens: the user may well have unticked it in Task Manager since.
         AppendMenuW(m, MF_STRING | (g_topmost ? MF_CHECKED : 0), CMD_TOPMOST, T(IDS_MENU_TOPMOST));
         AppendMenuW(m, MF_STRING | (StartupEnabled() ? MF_CHECKED : 0), CMD_STARTUP, T(IDS_MENU_STARTUP));
-        AppendMenuW(m, MF_STRING | (g_tray ? MF_CHECKED : 0), CMD_TRAY, T(IDS_MENU_TRAY));
+        AppendMenuW(m, MF_STRING | (g_tray ? MF_CHECKED : 0) | (g_corner ? MF_GRAYED : 0),
+                    CMD_TRAY, T(IDS_MENU_TRAY));
         AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(m, MF_STRING, CMD_ABOUT, T(IDS_MENU_ABOUT));
         // "Exit" quits the app outright: with no taskbar button, and a tray
@@ -746,6 +750,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             SetStartupEnabled(!StartupEnabled());
             break;
         case CMD_TRAY:
+            if (g_corner) break; // The tray is the control surface for a locked overlay.
             g_tray = !g_tray;
             TraySync();
             ConfigSetFlag(L"Tray", g_tray);
@@ -886,13 +891,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
 
     // Restore face, size and position. Each keeps the default below when its
     // key is missing, so a fresh install starts in a sane place.
-    g_face = 9; // Digital, compact minute-only default for CornerClock.
+    g_face = 9; // Digital, compact default for CornerClock.
     int wantPx = 192, wx = 120, wy = 120;
     ConfigLoadWindow(&g_face, &wantPx, &wx, &wy);
     g_corner = ConfigGetFlag(L"Corner", true);
 
     g_hwnd = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
+            (g_corner ? WS_EX_TRANSPARENT : 0),
         wc.lpszClassName, L"CornerClock", WS_POPUP,
         wx, wy, 1, 1, nullptr, nullptr, hInst, nullptr);
     if (!g_hwnd) return 1;
@@ -907,8 +913,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
     // no apply call, but must be read before CreateResources below: BuildDial
     // sizes the Digital faces' panel from ShowSeconds().
     g_topmost = ConfigGetFlag(L"Topmost", true);
-    g_tray    = ConfigGetFlag(L"Tray", true);
-    g_seconds = ConfigGetFlag(L"Seconds", false);
+    g_tray    = g_corner || ConfigGetFlag(L"Tray", true);
+    g_seconds = ConfigGetFlag(L"Seconds", true);
     TraySync();
 
     g_dpi = GetDpiForWindow(g_hwnd);

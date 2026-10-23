@@ -57,7 +57,7 @@ static const float BMID = (BY0 + BY1) / 2;
 static int o_hour24 = 1;
 static int o_ampm   = 0;
 static int o_date   = 0;
-static int o_panel  = 1;
+static int o_panel  = 0;
 static int o_text   = RGB(247, 247, 250);
 static int o_muted  = RGB(158, 184, 217);
 
@@ -103,6 +103,7 @@ class DigitalFace : public IClockFace {
     mutable IDWriteTextFormat* m_fTime = nullptr;   // 34 light — "03:12"
     mutable IDWriteTextFormat* m_fDay  = nullptr;   // 30 light — "04"
     mutable IDWriteTextFormat* m_fLbl  = nullptr;   // 11.5 — DEC / MON / PM / SS
+    mutable IDWriteTextFormat* m_fSec  = nullptr;   // readable inline seconds
 
     // One Segoe UI format at this size and weight, centre-aligned.
     IDWriteTextFormat* MakeFormat(float size, DWRITE_FONT_WEIGHT weight) const
@@ -125,9 +126,6 @@ public:
             b->SetColor(D2D1::ColorF(0.05f, 0.07f, 0.12f, 0.35f));
             rt->FillRoundedRectangle(
                 D2D1::RoundedRect(D2D1::RectF(bar.x0, BY0, bar.x1, BY1), 8.0f, 8.0f), b);
-        } else {
-            // Without the panel only the glyphs would hit-test.
-            FillHitTestWash(rt, b);
         }
         return true;
     }
@@ -151,6 +149,7 @@ public:
             m_fTime = MakeFormat(TIME_SIZE, DWRITE_FONT_WEIGHT_LIGHT);
             m_fDay  = MakeFormat(30.0f, DWRITE_FONT_WEIGHT_LIGHT);
             m_fLbl  = MakeFormat(11.5f, DWRITE_FONT_WEIGHT_NORMAL);
+            m_fSec  = MakeFormat(24.0f, DWRITE_FONT_WEIGHT_LIGHT);
         }
 
         rt->SetTransform(base);
@@ -211,7 +210,9 @@ public:
         } else if (o_ampm) {
             DrawTextIn(rt, b, m_fLbl, ampm, D2D1::RectF(sx0, BMID - 12, sx1, BMID + 12));
         } else if (seconds) {
-            DrawTextIn(rt, b, m_fLbl, buf,  D2D1::RectF(sx0, BMID - 12, sx1, BMID + 12));
+            b->SetColor(bright);
+            wsprintfW(buf, L":%02d", st.wSecond);
+            DrawTextIn(rt, b, m_fSec, buf, D2D1::RectF(sx0, BMID - 22, sx1, BMID + 22));
         }
     }
 };
