@@ -4,13 +4,13 @@
 
 struct Typography {
     const WCHAR* family;
-    float size, cell, colon, secondsAlpha;
+    float size, cell, colon;
     DWRITE_FONT_WEIGHT weight;
 };
 static const Typography STYLES[] = {
-    { L"Segoe UI", 26, 14.5f, 7, 0.72f, DWRITE_FONT_WEIGHT_NORMAL },
-    { L"Segoe UI", 32, 18.5f, 8, 0.85f, DWRITE_FONT_WEIGHT_SEMI_BOLD },
-    { L"Consolas", 28, 16.8f, 11, 0.80f, DWRITE_FONT_WEIGHT_NORMAL },
+    { L"Segoe UI", 26, 14.5f, 7, DWRITE_FONT_WEIGHT_MEDIUM },
+    { L"Segoe UI", 32, 18.5f, 8, DWRITE_FONT_WEIGHT_SEMI_BOLD },
+    { L"Consolas", 28, 16.8f, 11, DWRITE_FONT_WEIGHT_NORMAL },
 };
 static const UINT STYLE_NAMES[] = {
     IDS_CHOICE_CLEAN, IDS_CHOICE_BOLD_TYPE, IDS_CHOICE_MONO, 0
@@ -21,8 +21,7 @@ static const float DATE_W = 64, SIDE_W = 28;
 static const float BY0 = 99, BY1 = 141, BMID = 120;
 static int o_style = 0;
 static int o_hour24 = 1, o_ampm = 0, o_date = 0, o_panel = 0;
-static int o_text = RGB(247, 248, 250), o_muted = RGB(169, 180, 196);
-static bool s_darkInk;
+static int o_text = RGB(255, 255, 255), o_muted = RGB(169, 180, 196);
 static const FaceOpt s_opts[] = {
     { L"Typography", IDS_OPT_TYPOGRAPHY, OPT_CHOICE, &o_style, STYLE_NAMES },
     { L"24-hour clock", IDS_OPT_HOUR24, OPT_BOOL, &o_hour24, nullptr },
@@ -53,50 +52,97 @@ D2D1_RECT_F DigitalBounds()
     return D2D1::RectF(r.x0, BY0, r.x1, BY1);
 }
 
-void UpdateDigitalContrast(HWND window, int pixels)
-{
-    static ULONGLONG lastSample;
-    ULONGLONG now = GetTickCount64();
-    if (o_panel || !IsWindowVisible(window) || IsIconic(window) || now - lastSample < 1000)
-        return;
-    lastSample = now;
-    RECT position;
-    if (!GetWindowRect(window, &position)) return;
-    const Bar bar = LayOut();
-    HDC screen = GetDC(nullptr);
-    if (!screen) return;
-    unsigned total = 0, count = 0;
-    // These two rows sit in the transparent vertical padding, outside the
-    // glyphs. Sampling our own text would cause alternating light/dark ink.
-    for (int row = 0; row < 2; row++) {
-        int y = position.top + (int)((row ? BY1 - 2 : BY0 + 2) * pixels / DIAL);
-        for (int column = 1; column <= 3; column++) {
-            int x = position.left + (int)((bar.x0 + (bar.x1 - bar.x0) * column / 4) * pixels / DIAL);
-            COLORREF color = GetPixel(screen, x, y);
-            if (color == CLR_INVALID) continue;
-            total += (54 * GetRValue(color) + 183 * GetGValue(color) + 19 * GetBValue(color)) / 256;
-            count++;
-        }
-    }
-    ReleaseDC(nullptr, screen);
-    if (count) {
-        unsigned brightness = total / count;
-        // A small dead band prevents flicker over intermediate grays.
-        if (brightness > 160) s_darkInk = true;
-        else if (brightness < 135) s_darkInk = false;
-    }
-}
-
 class DigitalFace : public IClockFace {
+    struct Glyphs {
+        ID2D1PathGeometry* path[11] = {};
+        float advance[11] = {};
+        float baseline = 0;
+        bool attempted = false, ready = false;
+        ~Glyphs() { for (auto& p : path) SafeRelease(p); }
+    };
+    mutable Glyphs m_glyphs[_countof(STYLES)];
     mutable IDWriteTextFormat* m_time[_countof(STYLES)] = {};
     mutable IDWriteTextFormat* m_day = nullptr;
     mutable IDWriteTextFormat* m_label = nullptr;
 
-    // Plain text: contrast comes from the background sample, not an outline.
+    void CacheGlyphs(ID2D1RenderTarget* rt) const
+    {
+        Glyphs& cache = m_glyphs[o_style];
+        if (cache.attempted) return;
+        cache.attempted = true;
+        const Typography& style = STYLES[o_style];
+        IDWriteFontCollection* fonts = nullptr;
+        IDWriteFontFamily* family = nullptr;
+        IDWriteFont* font = nullptr;
+        IDWriteFontFace* face = nullptr;
+        ID2D1Factory* factory = nullptr;
+        IDWriteFactory* dw = SharedDWrite();
+        UINT32 index = 0;
+        BOOL found = FALSE;
+        HRESULT hr = dw ? dw->GetSystemFontCollection(&fonts) : E_FAIL;
+        if (SUCCEEDED(hr)) hr = fonts->FindFamilyName(style.family, &index, &found);
+        if (SUCCEEDED(hr) && !found) hr = E_FAIL;
+        if (SUCCEEDED(hr)) hr = fonts->GetFontFamily(index, &family);
+        if (SUCCEEDED(hr)) hr = family->GetFirstMatchingFont(style.weight,
+            DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, &font);
+        if (SUCCEEDED(hr)) hr = font->CreateFontFace(&face);
+        if (SUCCEEDED(hr)) {
+            rt->GetFactory(&factory);
+            DWRITE_FONT_METRICS metrics;
+            face->GetMetrics(&metrics);
+            float scale = style.size / metrics.designUnitsPerEm;
+            cache.baseline = BMID + (metrics.ascent - metrics.descent) * scale / 2;
+            for (int i = 0; i < 11 && SUCCEEDED(hr); i++) {
+                UINT32 codepoint = i < 10 ? L'0' + i : LocTimeSep()[0];
+                UINT16 glyph = 0;
+                DWRITE_GLYPH_METRICS gm = {};
+                hr = face->GetGlyphIndices(&codepoint, 1, &glyph);
+                if (SUCCEEDED(hr)) hr = face->GetDesignGlyphMetrics(&glyph, 1, &gm);
+                cache.advance[i] = gm.advanceWidth * scale;
+                if (SUCCEEDED(hr)) hr = factory->CreatePathGeometry(&cache.path[i]);
+                ID2D1GeometrySink* sink = nullptr;
+                if (SUCCEEDED(hr)) hr = cache.path[i]->Open(&sink);
+                if (SUCCEEDED(hr)) hr = face->GetGlyphRunOutline(style.size, &glyph,
+                    nullptr, nullptr, 1, FALSE, FALSE, sink);
+                if (sink) {
+                    HRESULT closed = sink->Close();
+                    if (SUCCEEDED(hr)) hr = closed;
+                    sink->Release();
+                }
+            }
+        }
+        cache.ready = SUCCEEDED(hr);
+        if (!cache.ready) for (auto& path : cache.path) SafeRelease(path);
+        SafeRelease(factory); SafeRelease(face); SafeRelease(font);
+        SafeRelease(family); SafeRelease(fonts);
+    }
+
+    // Digit outlines are font curves, rasterized with coverage antialiasing.
+    // Stroke first, then fill: only half the stroke remains outside the glyph.
+    // Eleven geometries per used style are built once, never on every tick.
     void Text(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b,
               IDWriteTextFormat* format, const WCHAR* text,
               const D2D1_RECT_F& rect, const D2D1_COLOR_F& color) const
     {
+        const Glyphs& cache = m_glyphs[o_style];
+        int digit = -1;
+        if (format == m_time[o_style] && text[0] && !text[1]) {
+            if (text[0] >= L'0' && text[0] <= L'9') digit = text[0] - L'0';
+            else if (text[0] == LocTimeSep()[0] && !LocTimeSep()[1]) digit = 10;
+        }
+        if (cache.ready && digit >= 0) {
+            D2D1_MATRIX_3X2_F base;
+            rt->GetTransform(&base);
+            float x = rect.left + (rect.right - rect.left - cache.advance[digit]) / 2;
+            rt->SetTransform(D2D1::Matrix3x2F::Translation(x, cache.baseline) * base);
+            rt->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            b->SetColor(D2D1::ColorF(0.10f, 0.12f, 0.15f, 0.9f));
+            rt->DrawGeometry(cache.path[digit], b, 1.25f);
+            b->SetColor(color);
+            rt->FillGeometry(cache.path[digit], b);
+            rt->SetTransform(base);
+            return;
+        }
         b->SetColor(color);
         DrawTextIn(rt, b, format, text, rect);
     }
@@ -126,6 +172,7 @@ public:
     {
         IDWriteFactory* dw = SharedDWrite();
         if (!dw) return;
+        CacheGlyphs(rt);
         const Typography& style = STYLES[o_style];
         if (!m_time[o_style])
             m_time[o_style] = MakeTextFormat(dw, style.family, style.size,
@@ -140,10 +187,7 @@ public:
         rt->SetTransform(base);
         rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         const Bar bar = LayOut();
-        bool darkInk = !o_panel && s_darkInk;
-        int ink = darkInk ? RGB(32, 36, 43) : o_text;
-        const D2D1_COLOR_F bright = FromRGB(ink);
-        const D2D1_COLOR_F muted = darkInk ? FromRGB(RGB(88, 94, 104)) : FromRGB(o_muted);
+        const D2D1_COLOR_F bright = FromRGB(o_text), muted = FromRGB(o_muted);
         WCHAR buf[16];
         if (o_date) {
             float x = bar.x0 + 6;
@@ -161,13 +205,13 @@ public:
         for (int i = 0; i < (seconds ? 6 : 4); i++) {
             if (i == 2 || i == 4) {
                 Text(rt, b, m_time[o_style], LocTimeSep(),
-                     D2D1::RectF(x, BY0, x + style.colon, BY1), FromRGB(ink, darkInk ? 0.60f : 0.48f));
+                     D2D1::RectF(x, BY0, x + style.colon, BY1), bright);
                 x += style.colon;
             }
             WCHAR digit[] = { buf[i], 0 };
             Text(rt, b, m_time[o_style], digit,
                  D2D1::RectF(x, BY0, x + style.cell, BY1),
-                 FromRGB(ink, i >= 4 ? style.secondsAlpha : 1.0f));
+                 bright);
             x += style.cell;
         }
 

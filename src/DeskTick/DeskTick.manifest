@@ -3,7 +3,7 @@
   <!-- Nothing binds to this identity, but a manifest claiming a version the exe's VERSIONINFO
        does not is the kind of small inconsistency a scanner notices. Third hand-kept copy of
        DeskTick\version.h's VER_NUMBER. -->
-  <assemblyIdentity type="win32" name="CornerClock" version="1.0.3.6" processorArchitecture="*"/>
+  <assemblyIdentity type="win32" name="CornerClock" version="1.0.3.7" processorArchitecture="*"/>
 
   <!-- Common Controls v6: the themed look of both dialogs' controls. Without this user32
        draws them in the unthemed v5 style, and the dark-mode theme classes dlgchrome.cpp

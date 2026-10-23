@@ -20,12 +20,14 @@ captioned maximized windows are not treated as fullscreen.
 
 The Digital face offers Clean (default), Bold and Mono typography presets in
 the appearance dialog. All use aligned, fixed-width digit cells for hours,
-minutes and seconds, with quieter separators and no glyph outline. Transparent
-Digital clocks use dark-gray text over bright content and the selected light
-text color over dark content. Six pixels in the transparent padding are sampled
-at most once per second during existing redraws; a brightness dead band avoids
-color flicker. No additional timer or stored screen image is used. Strongly
-mixed backgrounds can differ from the surrounding pixels used for this estimate.
+minutes and seconds. Digits and the locale's single-character time separator use
+cached DirectWrite font outlines, stroked and filled with Direct2D coverage
+antialiasing. The opaque white fill covers the inner half of a thin dark-gray
+stroke, leaving about a half-pixel exterior edge at the default size. Each used
+style builds eleven geometries once and reuses them every tick. There is no
+background sampling, repeated offset-text outline, blur, or additional timer.
+Optional date/AM-PM labels and uncommon multi-character separators use the
+existing grayscale text rendering path.
 
 Taskbar tracking uses WinEvent notifications restricted to the taskbar thread.
 Foreground changes use a foreground event hook and a geometry hook restricted
