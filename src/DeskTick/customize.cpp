@@ -203,7 +203,7 @@ static void BuildControls()
     // The app's name goes in the title because this window is where the app is
     // named: it takes a taskbar button and an Alt+Tab slot (the clock itself is
     // a tool window and takes neither), so without it there is nothing on screen
-    // that says what DeskTick is.
+    // that says what CornerClock is.
     //
     // The pieces are translated, the punctuation between them is ours. A
     // translatable string holding a "%s" would be a format string coming out of
@@ -213,7 +213,7 @@ static void BuildControls()
     // StringCchPrintfW truncates where wsprintfW would run off the end, which
     // matters because a translated face name has no length we control.
     WCHAR title[128];
-    if (n) StringCchPrintfW(title, _countof(title), L"%s: %s - DeskTick",
+    if (n) StringCchPrintfW(title, _countof(title), L"%s: %s - CornerClock",
                             T(IDS_CUSTOMIZE), T(s_face->GetLabel()));
     else   StringCchCopyW(title, _countof(title), T(IDS_CUSTOMIZE_TITLE));
     if (!n) {

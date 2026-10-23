@@ -198,3 +198,7 @@ const WCHAR* LocDate(const SYSTEMTIME& st, bool longForm, WCHAR* out, size_t cch
 // in g_builtinFaces; the engine selects it when the user picks a file.
 extern const IClockFace* const g_faceImage;
 void SetImageFacePath(const WCHAR* dir, const WCHAR* file);
+
+// Visible bounds of the digital strip, in the shared DIAL coordinate system.
+D2D1_RECT_F DigitalBounds();
+extern const IClockFace* const g_faceDigital;

@@ -4,9 +4,8 @@
 // Right-click for the menu: show seconds, customize, resize, face, always on
 // top, start with Windows, tray icon, exit. Double-click cycles to the next
 // built-in face.
-// Per-face options, always-on-top and the tray icon live in DeskTick.ini beside
-// the exe (settings.cpp); "start with Windows" lives in the registry, because
-// Windows is what reads it. The second hand and resize mode stay volatile.
+// Settings live in %LOCALAPPDATA%\CornerClock.ini (settings.cpp).
+// "Start with Windows" lives in the registry; resize mode stays volatile.
 
 #include <windows.h>
 #include <windowsx.h>
@@ -28,6 +27,7 @@ static const float GRIP_R = 13.0f;           // the round grip button's radius
 
 #define WM_ENDRESIZE (WM_APP + 1)            // posted by the outside-click hook
 #define WM_TRAYICON  (WM_APP + 2)            // the notification icon's callback
+#define WM_TASKBAR_CHANGED (WM_APP + 3)
 #define MENU_TICK    1u                      // unsigned: compared against a WPARAM
 
 // ---- menu command ids ----
@@ -59,6 +59,12 @@ static bool                 g_menuUp;    // our popup menu is tracking
 static bool                 g_drag;      // grip drag in progress
 static POINT                g_anchor;    // fixed top-left corner during drag
 static int                  g_face;      // 0..NUM_BUILTIN-1 = built-in face, NUM_BUILTIN.. = asset image (assets.cpp)
+static bool                 g_corner;
+static HWND                 g_taskbar;
+static HWINEVENTHOOK         g_taskbarHook;
+static bool                 g_taskbarPending;
+static void SyncCorner();
+static void WatchTaskbar();
 
 // Face whose hands DrawFrame draws — set by BuildDial to what was actually
 // drawn (an image load failure falls back to the default face, hands included).
@@ -237,6 +243,7 @@ void RefreshFace()          // not static: customize.cpp calls it
     g_dial = BuildDial();
     CustomizeRetarget(g_activeFace);    // BuildDial may have fallen back
     DrawFrame();
+    SyncCorner();
 }
 
 // Repaint at the current wall time, rebuilding nothing. Exists for a nested
@@ -408,6 +415,67 @@ static void ApplyTopmost()
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
+// Corner mode follows the primary taskbar without a polling timer or a mouse
+// hook. Only events from the taskbar's own thread reach our callback. Posting
+// coalesces animation events and keeps window mutations out of the callback.
+static void CALLBACK TaskbarEvent(HWINEVENTHOOK, DWORD, HWND hwnd,
+                                  LONG object, LONG child, DWORD, DWORD)
+{
+    if (hwnd != g_taskbar || object != OBJID_WINDOW || child != CHILDID_SELF ||
+        g_taskbarPending) return;
+    g_taskbarPending = PostMessageW(g_hwnd, WM_TASKBAR_CHANGED, 0, 0) != FALSE;
+}
+
+static void WatchTaskbar()
+{
+    if (!g_corner) return;
+    if (g_taskbarHook) UnhookWinEvent(g_taskbarHook);
+    g_taskbarHook = nullptr;
+    g_taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+    if (!g_taskbar) return; // TaskbarCreated or the existing minute tick retries.
+    DWORD process = 0;
+    DWORD thread = GetWindowThreadProcessId(g_taskbar, &process);
+    if (thread)
+        g_taskbarHook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE,
+            nullptr, TaskbarEvent, process, thread, WINEVENT_OUTOFCONTEXT);
+}
+
+static void SyncCorner()
+{
+    if (!g_corner || !g_winPx || g_resize || g_drag) return;
+    if (!IsWindow(g_taskbar) || !g_taskbarHook) WatchTaskbar();
+
+    POINT origin = {};
+    MONITORINFO monitor = { sizeof(monitor) };
+    HMONITOR hm = g_taskbar ? MonitorFromWindow(g_taskbar, MONITOR_DEFAULTTOPRIMARY)
+                           : MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
+    if (!GetMonitorInfoW(hm, &monitor)) return;
+
+    // Anchor the drawn strip, not the transparent square surrounding it.
+    D2D1_RECT_F bounds = g_activeFace == g_faceDigital ? DigitalBounds()
+                         : D2D1::RectF(0, 0, DIAL, DIAL);
+    int margin = MulDiv(8, g_dpi, 96);
+    int x = monitor.rcMonitor.right - margin - (int)(bounds.right * g_winPx / DIAL);
+    int y = monitor.rcMonitor.bottom - margin - (int)(bounds.bottom * g_winPx / DIAL);
+    RECT current = {};
+    GetWindowRect(g_hwnd, &current);
+    if (current.left != x || current.top != y)
+        SetWindowPos(g_hwnd, nullptr, x, y, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+    RECT bar = {}, visible = {};
+    bool expanded = g_taskbar && IsWindowVisible(g_taskbar) &&
+        GetWindowRect(g_taskbar, &bar) && IntersectRect(&visible, &bar, &monitor.rcMonitor) &&
+        visible.bottom - visible.top > MulDiv(3, g_dpi, 96) &&
+        visible.right - visible.left > MulDiv(3, g_dpi, 96);
+    bool show = !expanded;
+    if (show != (IsWindowVisible(g_hwnd) != FALSE)) {
+        if (show) DrawFrame(); // It may have been hidden across a minute boundary.
+        ShowWindow(g_hwnd, show ? SW_SHOWNOACTIVATE : SW_HIDE);
+        if (show) ApplyTopmost();
+    }
+}
+
 // ------------------------------------------------------------------
 // The notification icon. Off by default: the clock is its own UI, and this
 // exists for when it isn't reachable — parked under another window, or
@@ -444,7 +512,7 @@ static void TraySync()
     nid.hIcon = (HICON)LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(ICON_APP),
                                   IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
                                   GetSystemMetrics(SM_CYSMICON), LR_SHARED);
-    lstrcpyW(nid.szTip, L"DeskTick");       // fixed literal into a 128-char field
+    lstrcpyW(nid.szTip, L"CornerClock");       // fixed literal into a 128-char field
     Shell_NotifyIconW(NIM_ADD, &nid);
     // Version 3 callbacks: lParam is the mouse message, plainly. Version 4
     // reports the click as WM_CONTEXTMENU with packed screen coordinates,
@@ -465,10 +533,16 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     if (msg == s_taskbarCreated && s_taskbarCreated) {
         PinToDesktop();                     // the shell restarted: re-own the new DefView
         TraySync();                         // and re-add the icon it took with it
+        WatchTaskbar();
+        SyncCorner();
         return 0;
     }
 
     switch (msg) {
+    case WM_TASKBAR_CHANGED:
+        g_taskbarPending = false;
+        SyncCorner();
+        return 0;
     case WM_NCHITTEST: {
         if (g_resize) {
             RECT rc; GetWindowRect(hwnd, &rc);
@@ -499,6 +573,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_EXITSIZEMOVE:
         SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+        SyncCorner();
         SaveWindow();                           // the clock was dragged
         return 0;
     case WM_NCLBUTTONDBLCLK:
@@ -604,7 +679,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
         // Where the clock lives rather than what it shows: above other windows,
         // present at logon, reachable from the notification area. The first and
-        // third are ours to remember (DeskTick.ini); the second is a registry value
+        // third are ours to remember (CornerClock.ini); the second is a registry value
         // Windows itself reads, so it is asked for fresh every time the menu
         // opens: the user may well have unticked it in Task Manager since.
         AppendMenuW(m, MF_STRING | (g_topmost ? MF_CHECKED : 0), CMD_TOPMOST, T(IDS_MENU_TOPMOST));
@@ -694,10 +769,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         SetWindowPos(hwnd, nullptr, r->left, r->top, g_winPx, g_winPx,
                      SWP_NOZORDER | SWP_NOACTIVATE);
         DrawFrame();
+        SyncCorner();
         return 0;
     }
     case WM_ENDRESIZE:                          // click landed outside: done resizing
         SetResizeMode(false);
+        SyncCorner();
         return 0;
     case WM_TIMER:                              // only armed while the menu tracks
         if (wp == MENU_TICK) ClockRepaint();
@@ -714,11 +791,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DISPLAYCHANGE:
         // A monitor was unplugged, or one changed resolution under us. Either
         // can leave the clock in coordinates that no longer exist.
-        ClampToMonitor(hwnd);
+        if (g_corner) SyncCorner(); else ClampToMonitor(hwnd);
         return 0;
     case WM_SETTINGCHANGE:
         if (wp == SPI_SETWORKAREA) {            // taskbar moved, resized or un-hidden
-            ClampToMonitor(hwnd);
+            if (g_corner) SyncCorner(); else ClampToMonitor(hwnd);
             break;
         }
         // Light/dark switched while we're running: re-flush so the next
@@ -740,6 +817,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         ArmTimer();
         return 0;
     case WM_DESTROY:
+        if (g_taskbarHook) { UnhookWinEvent(g_taskbarHook); g_taskbarHook = nullptr; }
         TrayDelete();                           // unconditional: a leftover icon
                                                 // sits there until someone hovers it
         if (g_outsideHook) { UnhookWindowsHookEx(g_outsideHook); g_outsideHook = nullptr; }
@@ -808,12 +886,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
 
     // Restore face, size and position. Each keeps the default below when its
     // key is missing, so a fresh install starts in a sane place.
-    int wantPx = 0, wx = 120, wy = 120;
+    g_face = 9; // Digital, compact minute-only default for CornerClock.
+    int wantPx = 192, wx = 120, wy = 120;
     ConfigLoadWindow(&g_face, &wantPx, &wx, &wy);
+    g_corner = ConfigGetFlag(L"Corner", true);
 
     g_hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        wc.lpszClassName, L"DeskTick", WS_POPUP,
+        wc.lpszClassName, L"CornerClock", WS_POPUP,
         wx, wy, 1, 1, nullptr, nullptr, hInst, nullptr);
     if (!g_hwnd) return 1;
 
@@ -826,8 +906,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
     // after the ShowWindow below, which would otherwise undo it. Seconds needs
     // no apply call, but must be read before CreateResources below: BuildDial
     // sizes the Digital faces' panel from ShowSeconds().
-    g_topmost = ConfigGetFlag(L"Topmost", false);
-    g_tray    = ConfigGetFlag(L"Tray", false);
+    g_topmost = ConfigGetFlag(L"Topmost", true);
+    g_tray    = ConfigGetFlag(L"Tray", true);
     g_seconds = ConfigGetFlag(L"Seconds", false);
     TraySync();
 
@@ -841,6 +921,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
     ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
     ApplyTopmost();                         // after the show: showing raises
     DrawFrame();
+
+    WatchTaskbar();
+    SyncCorner();
 
     g_timer = CreateWaitableTimerExW(nullptr, nullptr,
                                      CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
@@ -857,6 +940,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
         if (r == WAIT_OBJECT_0) {
             DrawFrame();
             ArmTimer();
+            SyncCorner();
             if (g_needOwner) PinToDesktop();   // shell wasn't up yet; keep trying
         }
         MSG msg;

@@ -54,9 +54,9 @@ static const float BMID = (BY0 + BY1) / 2;
 // ---- options ----
 // Font size and weight stay off the menu: the three formats below are built
 // once and never rebuilt, and the fixed-slot layout is measured against them.
-static int o_hour24 = 0;                    // 12-hour, with the AM/PM slot
-static int o_ampm   = 1;
-static int o_date   = 1;
+static int o_hour24 = 1;
+static int o_ampm   = 0;
+static int o_date   = 0;
 static int o_panel  = 1;
 static int o_text   = RGB(247, 247, 250);
 static int o_muted  = RGB(158, 184, 217);
@@ -90,6 +90,12 @@ static Bar LayOut()
     r.side = r.time + TIME_W;
     r.x1   = r.x0 + w;
     return r;
+}
+
+D2D1_RECT_F DigitalBounds()
+{
+    const Bar bar = LayOut();
+    return D2D1::RectF(bar.x0, BY0, bar.x1, BY1);
 }
 
 class DigitalFace : public IClockFace {
