@@ -181,6 +181,8 @@ static void DrawFrame()
     SYSTEMTIME st;
     GetLocalTime(&st);
 
+    if (g_activeFace == g_faceDigital) UpdateDigitalContrast(g_hwnd, g_winPx);
+
     // Mid-drag the window (g_winPx) is smaller than the drag buffer (g_px):
     // draw the whole 240-DIP scene scaled into the top-left g_winPx region.
     // Steady state f == 1. This is what makes a resize drag allocation-free.

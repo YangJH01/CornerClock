@@ -201,4 +201,5 @@ void SetImageFacePath(const WCHAR* dir, const WCHAR* file);
 
 // Visible bounds of the digital strip, in the shared DIAL coordinate system.
 D2D1_RECT_F DigitalBounds();
+void UpdateDigitalContrast(HWND window, int pixels);
 extern const IClockFace* const g_faceDigital;

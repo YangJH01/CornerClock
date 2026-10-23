@@ -22,6 +22,7 @@ static const float BY0 = 99, BY1 = 141, BMID = 120;
 static int o_style = 0;
 static int o_hour24 = 1, o_ampm = 0, o_date = 0, o_panel = 0;
 static int o_text = RGB(247, 248, 250), o_muted = RGB(169, 180, 196);
+static bool s_darkInk;
 static const FaceOpt s_opts[] = {
     { L"Typography", IDS_OPT_TYPOGRAPHY, OPT_CHOICE, &o_style, STYLE_NAMES },
     { L"24-hour clock", IDS_OPT_HOUR24, OPT_BOOL, &o_hour24, nullptr },
@@ -52,28 +53,50 @@ D2D1_RECT_F DigitalBounds()
     return D2D1::RectF(r.x0, BY0, r.x1, BY1);
 }
 
+void UpdateDigitalContrast(HWND window, int pixels)
+{
+    static ULONGLONG lastSample;
+    ULONGLONG now = GetTickCount64();
+    if (o_panel || !IsWindowVisible(window) || IsIconic(window) || now - lastSample < 1000)
+        return;
+    lastSample = now;
+    RECT position;
+    if (!GetWindowRect(window, &position)) return;
+    const Bar bar = LayOut();
+    HDC screen = GetDC(nullptr);
+    if (!screen) return;
+    unsigned total = 0, count = 0;
+    // These two rows sit in the transparent vertical padding, outside the
+    // glyphs. Sampling our own text would cause alternating light/dark ink.
+    for (int row = 0; row < 2; row++) {
+        int y = position.top + (int)((row ? BY1 - 2 : BY0 + 2) * pixels / DIAL);
+        for (int column = 1; column <= 3; column++) {
+            int x = position.left + (int)((bar.x0 + (bar.x1 - bar.x0) * column / 4) * pixels / DIAL);
+            COLORREF color = GetPixel(screen, x, y);
+            if (color == CLR_INVALID) continue;
+            total += (54 * GetRValue(color) + 183 * GetGValue(color) + 19 * GetBValue(color)) / 256;
+            count++;
+        }
+    }
+    ReleaseDC(nullptr, screen);
+    if (count) {
+        unsigned brightness = total / count;
+        // A small dead band prevents flicker over intermediate grays.
+        if (brightness > 160) s_darkInk = true;
+        else if (brightness < 135) s_darkInk = false;
+    }
+}
+
 class DigitalFace : public IClockFace {
     mutable IDWriteTextFormat* m_time[_countof(STYLES)] = {};
     mutable IDWriteTextFormat* m_day = nullptr;
     mutable IDWriteTextFormat* m_label = nullptr;
 
-    // A one-DIP contour keeps every glyph legible over white and dark content.
-    // Reuses the existing formats and brush; no screen sampling or extra timer.
+    // Plain text: contrast comes from the background sample, not an outline.
     void Text(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* b,
               IDWriteTextFormat* format, const WCHAR* text,
               const D2D1_RECT_F& rect, const D2D1_COLOR_F& color) const
     {
-        static const D2D1_POINT_2F offsets[] = {
-            { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 },
-            { -0.707f, -0.707f }, { 0.707f, -0.707f },
-            { -0.707f, 0.707f }, { 0.707f, 0.707f }
-        };
-        b->SetColor(D2D1::ColorF(0.02f, 0.025f, 0.035f, 0.75f));
-        for (const auto& offset : offsets) {
-            D2D1_RECT_F edge = D2D1::RectF(rect.left + offset.x, rect.top + offset.y,
-                                          rect.right + offset.x, rect.bottom + offset.y);
-            DrawTextIn(rt, b, format, text, edge);
-        }
         b->SetColor(color);
         DrawTextIn(rt, b, format, text, rect);
     }
@@ -117,7 +140,10 @@ public:
         rt->SetTransform(base);
         rt->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
         const Bar bar = LayOut();
-        const D2D1_COLOR_F bright = FromRGB(o_text), muted = FromRGB(o_muted);
+        bool darkInk = !o_panel && s_darkInk;
+        int ink = darkInk ? RGB(32, 36, 43) : o_text;
+        const D2D1_COLOR_F bright = FromRGB(ink);
+        const D2D1_COLOR_F muted = darkInk ? FromRGB(RGB(88, 94, 104)) : FromRGB(o_muted);
         WCHAR buf[16];
         if (o_date) {
             float x = bar.x0 + 6;
@@ -135,13 +161,13 @@ public:
         for (int i = 0; i < (seconds ? 6 : 4); i++) {
             if (i == 2 || i == 4) {
                 Text(rt, b, m_time[o_style], LocTimeSep(),
-                     D2D1::RectF(x, BY0, x + style.colon, BY1), FromRGB(o_text, 0.48f));
+                     D2D1::RectF(x, BY0, x + style.colon, BY1), FromRGB(ink, darkInk ? 0.60f : 0.48f));
                 x += style.colon;
             }
             WCHAR digit[] = { buf[i], 0 };
             Text(rt, b, m_time[o_style], digit,
                  D2D1::RectF(x, BY0, x + style.cell, BY1),
-                 FromRGB(o_text, i >= 4 ? style.secondsAlpha : 1.0f));
+                 FromRGB(ink, i >= 4 ? style.secondsAlpha : 1.0f));
             x += style.cell;
         }
 
