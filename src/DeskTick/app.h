@@ -164,6 +164,7 @@ void ConfigLoadWindow(int* face, int* px, int* x, int* y);
 // The window toggles that are not face options — "Topmost", "Tray" — in the
 // same [Window] section. One pair of calls rather than a named pair each.
 bool ConfigGetFlag(const WCHAR* key, bool def);
+int ConfigSecondaryScale(); // percentage of the primary clock's logical size
 void ConfigSetFlag(const WCHAR* key, bool on);
 
 // Start with Windows, which is HKCU\...\Run rather than the INI: Windows is

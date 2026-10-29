@@ -43,6 +43,7 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
+    <TargetName>CornerClock</TargetName>
     <!-- Anchored to the project, not the solution. The default OutDir is
          $(SolutionDir)$(Platform)\$(Configuration)\, and the solution now sits
          one level up beside the MSIX project — which would put the exe in
@@ -55,6 +56,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <WarningLevel>Level4</WarningLevel>
       <ConformanceMode>true</ConformanceMode>
       <!-- Unset, MSVC defaults to C++14. Named here, in the shared group, so
@@ -91,6 +93,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="clock.cpp" />
+    <ClCompile Include="secondary.cpp" />
     <ClCompile Include="winutil.cpp" />
     <ClCompile Include="loc.cpp" />
     <ClCompile Include="assets.cpp" />
@@ -116,6 +119,7 @@
     <ClCompile Include="face_banner.cpp" />
     <ClCompile Include="face_split.cpp" />
     <ClInclude Include="app.h" />
+    <ClInclude Include="secondary.h" />
     <ClInclude Include="faces.h" />
     <ClInclude Include="version.h" />
     <ClInclude Include="Localization\strings.h" />

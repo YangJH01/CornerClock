@@ -1,165 +1,118 @@
-# DeskTick
-### Multi-Face Clock Widget for the Windows Desktop
+# CornerClock
 
-A clock for your Windows desktop - sixteen faces and no clutter. Analog, digital, word clock,
-terminal, banner. Frameless and transparent, it sits on your wallpaper, stays put through Show
-Desktop, and remembers its place. Around 1 MB, under 10 MB of RAM, twenty languages, no telemetry.
+A small Windows clock for an automatically hidden taskbar. Based on
+[DeskTick](https://github.com/riyasy/DeskTick), with independent naming and icon.
+This is an unofficial modification, not an RYF Tools release.
 
----
+The default is a transparent 24-hour digital clock with seconds in the primary
+monitor's bottom-right corner, eight scaled pixels from each edge. As the
+primary taskbar slides up or down, the clock follows its current top edge and
+stays visible above it. The clock's position is locked and mouse clicks pass
+through it to the application underneath.
+Corner mode is an independent topmost window, not owned by Explorer's desktop.
+It repairs lost topmost state on window-position events while respecting the
+fullscreen visibility rule.
 
-## 🎬 Preview
+On the clock's monitor, a foreground borderless fullscreen app hides the clock
+while it covers the taskbar. Returning to a normal window restores the clock;
+revealing the taskbar above the fullscreen app also reveals the clock. Normal
+captioned maximized windows are not treated as fullscreen.
 
-Watch DeskTick in action:  
+The Digital face offers Clean (default), Bold and Mono typography presets in
+the appearance dialog. All use aligned, fixed-width digit cells for hours,
+minutes and seconds. Digits and the locale's single-character time separator use
+cached DirectWrite font outlines, stroked and filled with Direct2D coverage
+antialiasing. The opaque white fill covers the inner half of a thin dark-gray
+stroke, leaving about a half-pixel exterior edge at the default size. Each used
+style builds eleven geometries once and reuses them every tick. There is no
+background sampling, repeated offset-text outline, blur, or additional timer.
+Optional date/AM-PM labels and uncommon multi-character separators use the
+existing grayscale text rendering path.
 
-[![DeskTick](https://markdown-videos-api.jorgenkh.no/url?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DuQBlrNrhKJA)](https://www.youtube.com/watch?v=uQBlrNrhKJA)
+Taskbar tracking uses WinEvent notifications restricted to the taskbar thread.
+Foreground changes use a foreground event hook and a geometry hook restricted
+to the active window's thread, with an early HWND filter.
+It adds no polling timer, global mouse hook, service, or helper process. The
+clock redraws once per second (once per minute if seconds are disabled) while
+visible. Hidden or minimized windows skip frame rendering and layered-window
+updates, retaining their graphics resources and the existing timer for recovery.
+Corner mode draws the current time before showing the window again. Movement
+repositions the cached clock window without redrawing its text. Memory usage
+must distinguish total working set from private memory; measure on the target PC.
 
----
+Right-click the tray icon for appearance, startup and exit. Resize, disabling
+always-on-top and hiding the tray icon are disabled while the overlay is locked. To change its size,
+exit and edit `Size` in the `[Window]` INI section (physical pixels; default 192).
+Settings live in `%LOCALAPPDATA%\CornerClock.ini`; the startup entry is named
+`CornerClock`. To restore freely draggable placement, exit, set `Corner=0` in
+the `[Window]` INI section, and restart.
 
-<!-- Drop a screen recording or screenshot here -->
-<img width="1832" height="2104" alt="minclock-faces" src="https://github.com/user-attachments/assets/1f3a94cb-e5ae-411d-b344-797fcc88d4e3" />
+Corner mode also displays a digital clock on each non-primary monitor. These
+clocks default to 150% of the primary clock's logical size, adjusted for each
+monitor's DPI. They share the process, tick timer, Direct2D factory and cached
+digital glyphs; only their windows and software render buffers are separate.
+Each follows its own bottom taskbar and hides when a foreground fullscreen app
+covers that monitor. Hidden clocks skip drawing independently. Display changes
+rebuild the secondary windows. The primary clock's appearance is unchanged.
+To adjust the secondary size, exit, set `SecondaryScale=150` (100–300 percent)
+in `[Window]`, and restart. `Secondary=0` disables the additional clocks.
+Secondary clocks always use the Digital face and its appearance settings.
 
-## ✨ Features
+The inherited global mouse hook has been removed from all modes. In free
+placement, resize mode ends on grip release (or by toggling Resize off in the
+menu), instead of observing clicks in other applications. Corner mode remains
+locked. This removes an unused input-monitoring capability; it does not promise
+a measurable idle CPU saving or anti-cheat approval.
 
-- **Sixteen Clock Faces** - Analog, digital, word clock, terminal, banner and more; pick one from the right-click menu or double-click the clock to cycle
-- **Per-Face Customization** - Colours, numerals, ticks, the date line, 12- or 24-hour time. Each face offers only the options it actually has
-- **Frameless & Transparent** - No window, no background. It sits directly on your wallpaper
-- **Drag Anywhere** - Grab it and move it; position and size are remembered
-- **Scale From Widget to Wall** - *Resize* from the right-click menu puts a grip in the corner; drag it to any size
-- **Show Seconds** - Second hand on or off, your choice
-- **Light & Dark** - The Customize and About dialogs follow your Windows theme
-- **Survives Win+D** - Stays where you put it, even after Show Desktop
-- **Always on Top** *(optional)* - Or let it live quietly behind your windows
-- **Start with Windows** *(optional)*
-- **System Tray Icon** *(optional)* - Same menu, from the notification area
-- **High-DPI Sharp** - Rescales cleanly across monitors and DPI boundaries
-- **20 Languages** - Matched automatically to your Windows display language
-- **Native & Tiny** - Software Direct2D. No frameworks, no background services, no runtime to install
-- **No Telemetry** - Nothing collected, nothing sent, no account, no internet needed
+## Build
 
----
-
-## 📥 Download
-
-<a href="https://apps.microsoft.com/detail/9NQGFVNBX4WJ?referrer=appbadge&mode=full&cid=from_github" target="_blank" rel="noopener noreferrer">
-  <img src="https://get.microsoft.com/images/en-us%20light.svg" width="200"/>
-</a>
-
-- Purchasing from the Microsoft Store helps support ongoing development ❤️
-- You can also support via GitHub Sponsors: [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-fe8e86?logo=github)](https://github.com/sponsors/riyasy)
-
-### 📊 Store vs GitHub Version
-
-|  | Microsoft Store | GitHub Release |
-|--|--|--|
-| **Price** | 🪙 Paid | 🆓 Free |
-| **Updates** | ✅ Automatic | ❌ Manual |
-| **Security** | ✅ Signed & verified | ❌ Not signed |
-
----
-
-## 🚀 Installation
-
-- Option 1 : [**Install from Microsoft Store**](https://apps.microsoft.com/detail/9NQGFVNBX4WJ?launch=true&cid=from_github&mode=full)
-- Option 2 : Download the portable exe from the Github [**Releases Page**](https://github.com/riyasy/DeskTick/releases)
-- Option 3 : Build it yourself (see below)
-
----
-
-## 🕰️ The Faces
-
-| | |
-|--|--|
-| **Simple** | Clean analog dial, the default |
-| **Classic dark** / **Classic light** | Traditional dial with numerals, two themes |
-| **Minimal** | Ticks only, no numerals |
-| **Icon** | The app's own mark as a dial |
-| **Bold** | Heavy markers, high contrast |
-| **Flat** | Solid disc, flat colour |
-| **Glass** | Frosted-glass dial |
-| **Dots** | Dot markers instead of ticks |
-| **Digital** / **Digital bold** | Panel readout with optional date and AM/PM |
-| **Word clock** | Spells the time out in English on a letter grid |
-| **Stack** | Hour over minute |
-| **Terminal** | Monospaced console readout with a blinking cursor |
-| **Banner** | Wide condensed type |
-| **Split** | Hour and minute split apart |
-
-Pick one from the right-click menu, or double-click the clock to cycle through them.
-
----
-
-## ⚙️ Settings
-
-The right-click menu is the whole interface:
-
-- **Face** - The sixteen faces, in a submenu
-- **Customize...** - The options the current face actually has: colours, numerals, tick marks, the date line, 12- or 24-hour time, drop shadows, frosted glass. Changes apply instantly, and one button resets a face to its original look
-- **Show seconds** - Second hand on or off
-- **Resize** - Turns on the grip at the bottom-right corner; drag it to scale
-- **Always on top**
-- **Start with Windows**
-- **Show in system tray**
-- **About DeskTick...**
-- **Exit**
-
-Everything is saved to `%LOCALAPPDATA%\DeskTick.ini`.
-
----
-
-## 📌 Requirements
-
-- Windows 10 or Windows 11 - x64, ARM64 or x86
-- No .NET, no Visual C++ redistributable, no runtime of any kind
-
----
-
-## 🧰 Building
-
-MSBuild only - no package manager, no test suite.
+Use Visual Studio 2022 C++ desktop tools and a Windows SDK:
 
 ```powershell
-$mb = "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe"
-& $mb src\DeskTick\DeskTick.vcxproj -p:Configuration=Release -p:Platform=x64
+msbuild src\DeskTick\DeskTick.vcxproj /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143
 ```
 
-Output lands in `src\DeskTick\x64\Release\DeskTick.exe`. Every translation is compiled in, so the exe is the whole app.
+Output: `src\DeskTick\x64\Release\CornerClock.exe`. The historical source
+folder names remain to keep the upstream diff small. The desktop executable is
+the supported build; the inherited upstream MSIX project is not a CornerClock
+package and should not be published.
 
----
+## Installation and independent startup
 
-## 🌍 Translations
+Install the executable in `%LOCALAPPDATA%\Programs\CornerClock\CornerClock.exe`.
+For a manual installation, launch it from Windows Explorer and enable **Start
+with Windows** in its tray menu. The normal per-user Run entry launches only
+the native executable at login; no watchdog, service or scheduled polling is
+needed.
 
-Twenty languages: Arabic, Chinese (Simplified & Traditional), Dutch, English, Finnish, French, German, Hungarian, Italian, Japanese, Korean, Malayalam, Polish, Portuguese (Brazil & Portugal), Russian, Spanish, Swedish, Ukrainian.
+Packaged automation hosts can expose a private HKCU registry view and put
+launched children in a job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. A successful
+registry read or `Start-Process` inside that host does not verify installation.
+Do not use that launch path for the installed background clock.
 
-All of them live in one spreadsheet, `src\DeskTick\Localization\translations.csv`: a row per string, a column per language, and a `context` column saying where each string appears. Adding a language is a new column and a translation pass; then run `Localization\build.ps1` and rebuild. Pull requests welcome.
+For deployment from such a host, use the local Windows registry provider
+(`StdRegProv.SetStringValue`) to register the quoted executable path as
+`CornerClock` under `HKEY_USERS\<current-user-SID>\Software\Microsoft\Windows\CurrentVersion\Run`.
+Read it back through the same provider and confirm it also appears in
+`Win32_StartupCommand`. Confirm the executable itself is visible through
+`CIM_DataFile`, not only inside the packaged host's file view.
 
----
+Launch through local `Win32_Process.Create` with a `Win32_ProcessStartup`
+instance whose `CreateFlags` includes `CREATE_BREAKAWAY_FROM_JOB` (`0x01000000`).
+Verify the process belongs to the interactive user's session and that
+`IsProcessInJob(process, NULL)` returns false. The launcher may then exit without
+terminating the clock. This is a one-time deployment action; it adds no resident
+helper. Subsequent logins use the ordinary Windows Run entry directly.
 
-## 🔒 Privacy
+After an update, repeat those launch and host-side registration checks. Checking
+the registry entry and invoking its command tests the login execution path, but
+is not a substitute for claiming an actual reboot test.
 
-Nothing is collected, nothing is sent. There is no account, no telemetry, and no internet connection
-required.
+## Source and license
 
----
-
-## 🛠️ Roadmap
-
-- Image faces - drop a PNG in `assets\` and it becomes a dial
-- More faces and more languages
-- A localizable word clock
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to fork and submit pull requests.
-
----
-
-## 💡 Tip
-
-Park it in a corner with **Always on top** off - it stays visible on the desktop, out of the way of
-your windows, and Win+D never loses it.
-
----
-
-(c) 2026 RYF Tools. All rights reserved.
+Original source copyright RYF Tools. CornerClock adds taskbar animation tracking,
+locked corner placement, transparent digital defaults with seconds, UTF-8 compilation,
+and independent application/configuration identity. Original source license and
+notices are preserved in [LICENSE](LICENSE). That file declares GPL-3.0 for the
+source and separate restrictions for binaries and trademarks. This repository
+contains source, not a binary release.
