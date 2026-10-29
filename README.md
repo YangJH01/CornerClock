@@ -45,6 +45,12 @@ Settings live in `%LOCALAPPDATA%\CornerClock.ini`; the startup entry is named
 the `[Window]` INI section, and restart. Corner mode targets the primary taskbar;
 secondary monitors do not receive additional widgets.
 
+The inherited global mouse hook has been removed from all modes. In free
+placement, resize mode ends on grip release (or by toggling Resize off in the
+menu), instead of observing clicks in other applications. Corner mode remains
+locked. This removes an unused input-monitoring capability; it does not promise
+a measurable idle CPU saving or anti-cheat approval.
+
 ## Build
 
 Use Visual Studio 2022 C++ desktop tools and a Windows SDK:

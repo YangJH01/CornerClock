@@ -27,7 +27,6 @@
 static const float GRIP   = 28.0f;           // corner hit-region size (DIPs)
 static const float GRIP_R = 13.0f;           // the round grip button's radius
 
-#define WM_ENDRESIZE (WM_APP + 1)            // posted by the outside-click hook
 #define WM_TRAYICON  (WM_APP + 2)            // the notification icon's callback
 #define WM_TASKBAR_CHANGED (WM_APP + 3)
 #define MENU_TICK    1u                      // unsigned: compared against a WPARAM
@@ -56,8 +55,6 @@ bool ShowSeconds() { return g_seconds; }   // faces.h: read by DrawDial, see the
 static bool                 g_resize;    // resize mode: marquee + grip shown
 static bool                 g_topmost;   // always on top (persisted)
 static bool                 g_tray;      // notification icon shown (persisted)
-static HHOOK                g_outsideHook;  // installed only while g_resize
-static bool                 g_menuUp;    // our popup menu is tracking
 static bool                 g_drag;      // grip drag in progress
 static POINT                g_anchor;    // fixed top-left corner during drag
 static int                  g_face;      // 0..NUM_BUILTIN-1 = built-in face, NUM_BUILTIN.. = asset image (assets.cpp)
@@ -329,45 +326,15 @@ static int GripPx() { return MulDiv(g_winPx, (int)GRIP, (int)DIAL); }
 static bool InGrip(int x, int y) { int s = GripPx(); return x > g_winPx - s && y > g_winPx - s; }
 
 // ------------------------------------------------------------------
-// Resize mode is transient: turn it on, size the clock, click away. But this
-// window is WS_EX_NOACTIVATE, so there is no focus to lose — no WM_KILLFOCUS,
-// no WM_ACTIVATEAPP — and a click landing anywhere else never reaches us. A
-// low-level mouse hook is the only thing that sees that click, which is what
-// lets the mode end without an accept button on the clock.
-//
-// Installed ONLY while resize mode is on: the ordinary state pays nothing.
-// The proc stays trivial for the reason it has to — Windows silently drops a
-// low-level hook whose proc overruns LowLevelHooksTimeout — and only posts,
-// leaving the state change to the normal message path.
+// Free-placement resize mode ends when its grip is released, or when the
+// menu command is toggled off. Only our own window receives mouse input;
+// no global mouse hook is needed. Locked corner mode cannot enter resize.
 // ------------------------------------------------------------------
-static LRESULT CALLBACK OutsideClickProc(int code, WPARAM wp, LPARAM lp)
-{
-    // g_menuUp: picking an item in our own menu lands outside the window, and
-    // would otherwise cancel resize mode as a side effect of using the menu.
-    if (code == HC_ACTION && !g_menuUp &&
-        (wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN || wp == WM_MBUTTONDOWN)) {
-        POINT pt = ((MSLLHOOKSTRUCT*)lp)->pt;
-        RECT rc; GetWindowRect(g_hwnd, &rc);
-        if (!PtInRect(&rc, pt))
-            PostMessageW(g_hwnd, WM_ENDRESIZE, 0, 0);
-    }
-    return CallNextHookEx(nullptr, code, wp, lp);
-}
-
-// Enter or leave resize mode: the marquee and grip appear, and the
-// outside-click hook lives exactly as long as the mode does.
 static void SetResizeMode(bool on)
 {
     if (g_corner && on) return;
     if (on == g_resize) return;
     g_resize = on;
-    if (on) {
-        g_outsideHook = SetWindowsHookExW(WH_MOUSE_LL, OutsideClickProc,
-                                          GetModuleHandleW(nullptr), 0);
-    } else if (g_outsideHook) {
-        UnhookWindowsHookEx(g_outsideHook);
-        g_outsideHook = nullptr;
-    }
     DrawFrame();
 }
 
@@ -726,7 +693,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             g_drag = false;
             ReleaseCapture();
             CreateResources(g_winPx);           // shrink buffer to final size, crisp dial
-            DrawFrame();
+            SetResizeMode(false);
             SaveWindow();
         }
         return 0;
@@ -734,7 +701,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (g_drag) {                           // capture stolen mid-drag:
             g_drag = false;                     // finalize at current size
             CreateResources(g_winPx);
-            DrawFrame();
+            SetResizeMode(false);
+            SaveWindow();
         }
         return 0;
     case WM_NCRBUTTONUP: {
@@ -793,7 +761,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         AppendMenuW(m, MF_STRING, CMD_CLOSE, T(IDS_MENU_EXIT));
         SetForegroundWindow(hwnd);              // required for menu dismissal on NOACTIVATE windows
         POINT pt; GetCursorPos(&pt);
-        g_menuUp = true;                        // the outside-click hook must ignore menu clicks
         // TPM_LAYOUTRTL mirrors the menu for Arabic and Hebrew — item text
         // right-aligned, submenus opening leftward. The clock itself is a dial
         // and needs nothing.
@@ -808,7 +775,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         SetTimer(hwnd, MENU_TICK, 250, nullptr);
         int cmd = TrackPopupMenu(m, tpm, pt.x, pt.y, 0, hwnd, nullptr);
         KillTimer(hwnd, MENU_TICK);
-        g_menuUp = false;
         DestroyMenu(m);                         // destroys the submenu too
         // SetForegroundWindow above raised us; put it back. Here and not before
         // the switch: the face branch returns early. Still ahead of the commands,
@@ -874,10 +840,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         SyncCorner();
         return 0;
     }
-    case WM_ENDRESIZE:                          // click landed outside: done resizing
-        SetResizeMode(false);
-        SyncCorner();
-        return 0;
     case WM_TIMER:                              // only armed while the menu tracks
         if (wp == MENU_TICK) ClockRepaint();
         return 0;
@@ -924,7 +886,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (g_taskbarHook) { UnhookWinEvent(g_taskbarHook); g_taskbarHook = nullptr; }
         TrayDelete();                           // unconditional: a leftover icon
                                                 // sits there until someone hovers it
-        if (g_outsideHook) { UnhookWindowsHookEx(g_outsideHook); g_outsideHook = nullptr; }
         CustomizeClose();                       // both are ownerless, so neither
         AboutClose();                           // closes itself when we go
         PostQuitMessage(0);
