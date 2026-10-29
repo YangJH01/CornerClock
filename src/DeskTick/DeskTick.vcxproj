@@ -93,6 +93,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="clock.cpp" />
+    <ClCompile Include="secondary.cpp" />
     <ClCompile Include="winutil.cpp" />
     <ClCompile Include="loc.cpp" />
     <ClCompile Include="assets.cpp" />
@@ -118,6 +119,7 @@
     <ClCompile Include="face_banner.cpp" />
     <ClCompile Include="face_split.cpp" />
     <ClInclude Include="app.h" />
+    <ClInclude Include="secondary.h" />
     <ClInclude Include="faces.h" />
     <ClInclude Include="version.h" />
     <ClInclude Include="Localization\strings.h" />

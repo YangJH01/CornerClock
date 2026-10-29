@@ -45,8 +45,18 @@ always-on-top and hiding the tray icon are disabled while the overlay is locked.
 exit and edit `Size` in the `[Window]` INI section (physical pixels; default 192).
 Settings live in `%LOCALAPPDATA%\CornerClock.ini`; the startup entry is named
 `CornerClock`. To restore freely draggable placement, exit, set `Corner=0` in
-the `[Window]` INI section, and restart. Corner mode targets the primary taskbar;
-secondary monitors do not receive additional widgets.
+the `[Window]` INI section, and restart.
+
+Corner mode also displays a digital clock on each non-primary monitor. These
+clocks default to 150% of the primary clock's logical size, adjusted for each
+monitor's DPI. They share the process, tick timer, Direct2D factory and cached
+digital glyphs; only their windows and software render buffers are separate.
+Each follows its own bottom taskbar and hides when a foreground fullscreen app
+covers that monitor. Hidden clocks skip drawing independently. Display changes
+rebuild the secondary windows. The primary clock's appearance is unchanged.
+To adjust the secondary size, exit, set `SecondaryScale=150` (100–300 percent)
+in `[Window]`, and restart. `Secondary=0` disables the additional clocks.
+Secondary clocks always use the Digital face and its appearance settings.
 
 The inherited global mouse hook has been removed from all modes. In free
 placement, resize mode ends on grip release (or by toggling Resize off in the

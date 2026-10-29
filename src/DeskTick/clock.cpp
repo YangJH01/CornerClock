@@ -15,6 +15,7 @@
 #include <string.h>
 #include "faces.h"
 #include "app.h"
+#include "secondary.h"
 
 #pragma comment(lib, "d2d1")
 #pragma comment(lib, "user32")
@@ -249,6 +250,7 @@ void RefreshFace()          // not static: customize.cpp calls it
     g_dial = BuildDial();
     CustomizeRetarget(g_activeFace);    // BuildDial may have fallen back
     DrawFrame();
+    SecondaryRefresh(MulDiv(g_winPx, 96, g_dpi));
     SyncCorner();
 }
 
@@ -263,6 +265,7 @@ void RefreshFace()          // not static: customize.cpp calls it
 void ClockRepaint()         // not static: customize.cpp calls it
 {
     DrawFrame();
+    SecondaryDraw();
 }
 
 // Persist face + geometry. Called after the three things that change them:
@@ -452,10 +455,10 @@ static void WatchForeground()
             nullptr, ForegroundEvent, process, thread, WINEVENT_OUTOFCONTEXT);
 }
 
-static bool FullscreenCoversClock(HMONITOR monitor, const RECT& screen, bool barExpanded)
+bool FullscreenCoversClock(HMONITOR monitor, const RECT& screen, HWND taskbar, bool barExpanded)
 {
     HWND foreground = GetForegroundWindow();
-    if (!foreground || foreground == g_hwnd || foreground == g_taskbar ||
+    if (!foreground || foreground == g_hwnd || foreground == taskbar ||
         foreground == GetShellWindow() || !IsWindowVisible(foreground) || IsIconic(foreground) ||
         MonitorFromWindow(foreground, MONITOR_DEFAULTTONULL) != monitor) return false;
     WCHAR cls[64] = {};
@@ -481,7 +484,7 @@ static bool FullscreenCoversClock(HMONITOR monitor, const RECT& screen, bool bar
     // geometry alone is insufficient: compare the actual window stacking order.
     if (barExpanded)
         for (HWND w = GetTopWindow(nullptr); w; w = GetWindow(w, GW_HWNDNEXT)) {
-            if (w == g_taskbar) return false;
+            if (w == taskbar) return false;
             if (w == foreground) break;
         }
     return true;
@@ -492,6 +495,7 @@ static void SyncCorner()
     if (!g_corner || !g_winPx || g_resize || g_drag) return;
     if (!IsWindow(g_taskbar) || !g_taskbarHook) WatchTaskbar();
     WatchForeground();
+    SecondarySync();
 
     POINT origin = {};
     MONITORINFO monitor = { sizeof(monitor) };
@@ -508,7 +512,7 @@ static void SyncCorner()
         visible.bottom - visible.top > MulDiv(3, g_dpi, 96);
     if (barExpanded) bottom = visible.top;
 
-    bool show = !FullscreenCoversClock(hm, monitor.rcMonitor, barExpanded);
+    bool show = !FullscreenCoversClock(hm, monitor.rcMonitor, g_taskbar, barExpanded);
     if (!show) {
         if (IsWindowVisible(g_hwnd)) ShowWindow(g_hwnd, SW_HIDE);
         return;
@@ -593,6 +597,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         PinToDesktop();                     // the shell restarted: re-own the new DefView
         TraySync();                         // and re-add the icon it took with it
         WatchTaskbar();
+        SecondaryRebuild();
         SyncCorner();
         return 0;
     }
@@ -858,10 +863,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DISPLAYCHANGE:
         // A monitor was unplugged, or one changed resolution under us. Either
         // can leave the clock in coordinates that no longer exist.
+        SecondaryRebuild();
         if (g_corner) SyncCorner(); else ClampToMonitor(hwnd);
         return 0;
     case WM_SETTINGCHANGE:
         if (wp == SPI_SETWORKAREA) {            // taskbar moved, resized or un-hidden
+            SecondaryRebuild();
             if (g_corner) SyncCorner(); else ClampToMonitor(hwnd);
             break;
         }
@@ -880,10 +887,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         // System time / time zone changed (Settings, NTP sync). Our timer
         // uses a relative due time so it won't fire early — redraw with the
         // new wall time now and re-aim at the new minute/second boundary.
-        DrawFrame();
+        ClockRepaint();
         ArmTimer();
         return 0;
     case WM_DESTROY:
+        SecondaryDestroy();
         if (g_focusHook) { UnhookWinEvent(g_focusHook); g_focusHook = nullptr; }
         if (g_foregroundHook) { UnhookWinEvent(g_foregroundHook); g_foregroundHook = nullptr; }
         if (g_taskbarHook) { UnhookWinEvent(g_taskbarHook); g_taskbarHook = nullptr; }
@@ -991,6 +999,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
     ApplyTopmost();                         // after the show: showing raises
     DrawFrame();
 
+    if (g_corner && ConfigGetFlag(L"Secondary", true))
+        SecondaryInit(g_hwnd, g_factory, MulDiv(g_winPx, 96, g_dpi));
     WatchTaskbar();
     SyncCorner();
 
@@ -1007,7 +1017,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR cmdLine, int)
         DWORD r = MsgWaitForMultipleObjectsEx(1, &g_timer, INFINITE,
                                               QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (r == WAIT_OBJECT_0) {
-            DrawFrame();
+            ClockRepaint();
             ArmTimer();
             SyncCorner();
             if (g_needOwner) PinToDesktop();   // shell wasn't up yet; keep trying

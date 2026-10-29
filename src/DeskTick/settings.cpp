@@ -276,6 +276,12 @@ void ConfigLoadWindow(int* face, int* px, int* x, int* y)
 // icon — as one pair of calls rather than a named pair each. Same section as
 // the geometry: it is the same window they describe, and anything in [Window]
 // is already the thing that survives a face change.
+int ConfigSecondaryScale()
+{
+    int scale = (int)GetPrivateProfileIntW(L"Window", L"SecondaryScale", 150, IniPath());
+    return max(100, min(300, scale));
+}
+
 bool ConfigGetFlag(const WCHAR* key, bool def)
 {
     return GetPrivateProfileIntW(L"Window", key, def, IniPath()) != 0;

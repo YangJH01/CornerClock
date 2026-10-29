@@ -15,11 +15,11 @@
 #define VER_MAJOR       1
 #define VER_MINOR       0
 #define VER_PATCH       3
-#define VER_BUILD       10
+#define VER_BUILD       11
 
-#define VER_NUMBER      1,0,3,10
-#define VER_STRING      "1.0.3.10"
-#define VER_DISPLAY     "v1.0.3.10 CornerClock"
+#define VER_NUMBER      1,0,3,11
+#define VER_STRING      "1.0.3.11"
+#define VER_DISPLAY     "v1.0.3.11 CornerClock"
 
 #define VER_COMPANY     "CornerClock contributors (unofficial fork)"
 #define VER_PRODUCT     "CornerClock"
