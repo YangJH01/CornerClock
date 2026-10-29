@@ -172,9 +172,12 @@ static bool CreateResources(int px)
 // One frame: blit cached dial, stroke the hands, resize-mode overlays,
 // push to the screen.
 // ------------------------------------------------------------------
-static void DrawFrame()
+static void DrawFrame(bool beforeShow = false)
 {
     if (!g_rt || !g_dial || !g_brush) return;   // survive a failed CreateResources
+    // Keep resources and the recovery tick while hidden, but skip rendering
+    // and UpdateLayeredWindow. SyncCorner paints the current time before show.
+    if (!beforeShow && (!IsWindowVisible(g_hwnd) || IsIconic(g_hwnd))) return;
     SYSTEMTIME st;
     GetLocalTime(&st);
 
@@ -523,7 +526,7 @@ static void SyncCorner()
         SetWindowPos(g_hwnd, nullptr, x, y, 0, 0,
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     if (!IsWindowVisible(g_hwnd) || IsIconic(g_hwnd)) {
-        DrawFrame();
+        DrawFrame(true); // Refresh hidden pixels before exposing the window.
         ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
     }
     // Visibility alone does not mean the clock is above normal application

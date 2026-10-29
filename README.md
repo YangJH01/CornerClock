@@ -33,7 +33,10 @@ Taskbar tracking uses WinEvent notifications restricted to the taskbar thread.
 Foreground changes use a foreground event hook and a geometry hook restricted
 to the active window's thread, with an early HWND filter.
 It adds no polling timer, global mouse hook, service, or helper process. The
-clock redraws once per second (once per minute if seconds are disabled). Movement
+clock redraws once per second (once per minute if seconds are disabled) while
+visible. Hidden or minimized windows skip frame rendering and layered-window
+updates, retaining their graphics resources and the existing timer for recovery.
+Corner mode draws the current time before showing the window again. Movement
 repositions the cached clock window without redrawing its text. Memory usage
 must distinguish total working set from private memory; measure on the target PC.
 
