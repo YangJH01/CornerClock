@@ -58,6 +58,37 @@ folder names remain to keep the upstream diff small. The desktop executable is
 the supported build; the inherited upstream MSIX project is not a CornerClock
 package and should not be published.
 
+## Installation and independent startup
+
+Install the executable in `%LOCALAPPDATA%\Programs\CornerClock\CornerClock.exe`.
+For a manual installation, launch it from Windows Explorer and enable **Start
+with Windows** in its tray menu. The normal per-user Run entry launches only
+the native executable at login; no watchdog, service or scheduled polling is
+needed.
+
+Packaged automation hosts can expose a private HKCU registry view and put
+launched children in a job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. A successful
+registry read or `Start-Process` inside that host does not verify installation.
+Do not use that launch path for the installed background clock.
+
+For deployment from such a host, use the local Windows registry provider
+(`StdRegProv.SetStringValue`) to register the quoted executable path as
+`CornerClock` under `HKEY_USERS\<current-user-SID>\Software\Microsoft\Windows\CurrentVersion\Run`.
+Read it back through the same provider and confirm it also appears in
+`Win32_StartupCommand`. Confirm the executable itself is visible through
+`CIM_DataFile`, not only inside the packaged host's file view.
+
+Launch through local `Win32_Process.Create` with a `Win32_ProcessStartup`
+instance whose `CreateFlags` includes `CREATE_BREAKAWAY_FROM_JOB` (`0x01000000`).
+Verify the process belongs to the interactive user's session and that
+`IsProcessInJob(process, NULL)` returns false. The launcher may then exit without
+terminating the clock. This is a one-time deployment action; it adds no resident
+helper. Subsequent logins use the ordinary Windows Run entry directly.
+
+After an update, repeat those launch and host-side registration checks. Checking
+the registry entry and invoking its command tests the login execution path, but
+is not a substitute for claiming an actual reboot test.
+
 ## Source and license
 
 Original source copyright RYF Tools. CornerClock adds taskbar animation tracking,
